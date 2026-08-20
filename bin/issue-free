@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# issue-libre.sh <org/repo> <numero> — ¿está realmente libre este issue?
+# issue-free <org/repo> <number> - is this issue actually free?
 #
-# Existe porque cinco PR seguidos duplicaron trabajo ajeno. El filtro que usaba
-# —sin asignar, sin comentarios— no detecta nada: un mantenedor que abre un issue
-# y lo arregla él mismo no se autoasigna ni se comenta. Hay que mirar los PR.
+# Exists because five pull requests in a row duplicated open work. Filtering on
+# "no assignee, no comments" detects nothing: a maintainer who files an issue
+# and fixes it does neither. You have to look at the pull requests.
 set -uo pipefail
 repo="${1:?usage: issue-free org/repo number}"; num="${2:?issue number required}"
 
@@ -11,32 +11,32 @@ info=$(gh api "repos/$repo/issues/$num" 2>/dev/null) || { echo "NOT FOUND  $repo
 autor=$(jq -r .user.login <<<"$info"); estado=$(jq -r .state <<<"$info")
 asig=$(jq -r '.assignee.login // "nobody"' <<<"$info"); titulo=$(jq -r .title <<<"$info")
 
-# 1. Referencias cruzadas: PR que GitHub ya enlazó a este issue.
+# 1. Cross-references: pull requests GitHub has already linked to this issue.
 enlazados=$(gh api "repos/$repo/issues/$num/timeline" --paginate 2>/dev/null \
   | jq -r '.[] | select(.event=="cross-referenced") | .source.issue
            | select(.pull_request != null) | select(.state=="open")
            | "  #\(.number) \(.user.login) \(.created_at[0:10]) \(.title[0:52])"' 2>/dev/null | sort -u)
 
-# 2. Búsqueda por texto: PR abiertos que mencionan el número.
+# 2. Text search: open pull requests mentioning the number.
 mencion=$(gh api "search/issues?q=repo:$repo+is:pr+is:open+$num" \
   --jq '.items[] | "  #\(.number) \(.user.login) \(.created_at[0:10]) \(.title[0:52])"' 2>/dev/null | sort -u)
 
-# 3. ¿El autor del issue tiene PR abiertos aquí? Suele arreglarse lo que uno reporta.
+# 3. Does the issue author have open pull requests here? People fix what they report.
 suyos=$(gh api "search/issues?q=repo:$repo+is:pr+is:open+author:$autor" \
   --jq '.items[] | "  #\(.number) \(.created_at[0:10]) \(.title[0:52])"' 2>/dev/null | head -6)
 
-# 4. Reclamo en prosa: no hay PR todavía pero alguien dice que lo está haciendo.
-#    jsonschema#1536 no tenía PR y el cuerpo decía "I have a working patch and tests".
+# 4. A claim in prose: no pull request yet, but someone says they are on it.
+#    jsonschema#1536 had no pull request; its body said "I have a working patch and tests".
 cuerpo=$(jq -r '.body // ""' <<<"$info")
 reclamo=$(grep -Eio ".{0,60}(I have (a |an )?(working )?(patch|fix|PR)|I(.| a)?m working on (this|it)|I(.| wi)?ll (open|send|submit) (a )?(PR|pull request)|will open a PR|assign (this |it )?to me|I would like to (work on|take) th).{0,60}" <<<"$cuerpo" | head -3)
-# Y en los comentarios, por si alguien lo reclamó después.
+# And in the comments, in case someone claimed it later.
 coment=$(gh api "repos/$repo/issues/$num/comments" --paginate 2>/dev/null | jq -r '.[] | "\(.user.login): \(.body)"' 2>/dev/null \
   | grep -Eio ".{0,50}(I(.| a)?m working on|I(.| wi)?ll (open|send|submit)|assign (this|it) to me|I would like to (work on|take)).{0,60}" | head -3)
 
 ocupado=""
 [ -n "$enlazados$mencion$reclamo$coment" ] && ocupado=1
 
-echo "$([ -n "$ocupado" ] && echo TAKEN || echo FREE)  $repo#$num  ($estado, autor $autor, assigned to $asig)"
+echo "$([ -n "$ocupado" ] && echo TAKEN || echo FREE)  $repo#$num  ($estado, author $autor, assigned to $asig)"
 echo "  $titulo"
 [ -n "$enlazados" ] && { echo "  pull requests GitHub has linked:"; echo "$enlazados"; }
 [ -n "$mencion" ]   && { echo "  open pull requests mentioning the number:"; echo "$mencion"; }

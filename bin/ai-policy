@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# politica-ia.sh <org/repo> — clasifica la política de IA de un proyecto ANTES de contribuir.
+# ai-policy <org/repo> - classify a project's AI policy BEFORE contributing.
 #
-# Existe porque una contribución técnicamente correcta a pallets/click fue cerrada
-# como "AI junk": la política no estaba en el repositorio sino en el .github de la
-# organización, y en la web del proyecto. Mirar solo el repo no basta.
+# Exists because a technically correct contribution to pallets/click was closed as
+# "AI junk": the policy was not in the repository but in the organisation's .github,
+# and on the project site. Reading only the repository is not enough.
 #
 # Salida: FORBIDDEN | DISCLOSE | RESPONSIBLE-USE | NO-POLICY  + las frases que lo deciden.
 set -uo pipefail
@@ -12,25 +12,25 @@ repo="${1:?usage: ai-policy org/repo}"; org="${repo%%/*}"
 leer() { gh api "repos/$1/contents/$2" --jq .content 2>/dev/null | base64 -d 2>/dev/null; }
 
 corpus=""; fuentes=()
-# 1. Nivel ORGANIZACIÓN — la fuente que se pasa por alto y cerró el PR de Click.
+# 1. ORGANISATION level - the source people skip, and the one that closed the Click PR.
 for f in CONTRIBUTING.md AI_POLICY.md POLICY.md profile/README.md; do
   c=$(leer "$org/.github" "$f") && [ -n "$c" ] && { corpus+="$c"$'\n'; fuentes+=("$org/.github/$f"); }
 done
-# 2. Nivel REPOSITORIO.
+# 2. REPOSITORY level.
 for f in CONTRIBUTING.md CONTRIBUTING.rst .github/CONTRIBUTING.md AI_POLICY.md AGENTS.md \
          CODE_OF_CONDUCT.md .github/PULL_REQUEST_TEMPLATE.md .github/pull_request_template.md \
          docs/contributing.md docs/contributing.rst docs/CONTRIBUTING.md \
          Documentation/HOWTO-CONTRIBUTING.md; do
   c=$(leer "$repo" "$f") && [ -n "$c" ] && { corpus+="$c"$'\n'; fuentes+=("$repo/$f"); }
 done
-# 3. Web del proyecto, enlazada desde el repo (Pallets publica ahí su prohibición).
+# 3. The project site linked from the repo (Pallets publishes its ban there).
 web=$(gh api "repos/$repo" --jq '.homepage // empty' 2>/dev/null)
 
 if [ -z "$corpus" ]; then echo "NO-DOCS  $repo"; [ -n "$web" ] && echo "  revisar a mano: $web"; exit 2; fi
 
 clasifica() { grep -Eiq "$1" <<<"$corpus"; }
-# Solo frases inequívocas de prohibición. Nada de "(not )?" opcional: la política de
-# Rust dice "LLM contributions are not banned" y un "not" opcional la invertiria.
+# Unambiguous prohibitions only. No optional "(not )?": Rust's policy says
+# "LLM contributions are not banned", and an optional "not" inverts it.
 if   clasifica 'closed on sight|likely to be blocked|we do not (accept|allow) (AI|LLM)|(AI|LLM)[a-z -]{0,30}(contributions|PRs|pull requests)[^.]{0,20} (are|is) (banned|prohibited|forbidden|not accepted)'
 then estado="FORBIDDEN"
 elif clasifica 'must disclose|MUST disclose|disclosure \(required\)|please disclose|Assisted-by|Co-authored-by.{0,30}trailer|AI Disclosure'
@@ -40,8 +40,8 @@ then estado="RESPONSIBLE-USE"
 else estado="NO-POLICY"
 fi
 
-# Regla legal que va aparte del permiso: systemd y util-linux aceptan trabajo asistido por
-# IA pero prohiben acreditarla en el commit, justo lo contrario de lo que pide pytest.
+# A legal rule separate from permission: systemd and util-linux accept AI-assisted
+# work but forbid crediting it in the commit - the opposite of what pytest asks for.
 if clasifica '[Oo]nly human beings can (ever )?be credited|no Co-Developed-By or Co-Authored-By'
 then estado="$estado  [NO-AI-CREDIT: do not add Co-authored-by or Assisted-by for a model]"
 fi
