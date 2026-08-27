@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Lint shell scripts
+        run: shellcheck gh-before-you-contribute bin/* tests/run.sh tests/fixtures/bin/gh
+
+      - name: Run deterministic tests
+        run: tests/run.sh

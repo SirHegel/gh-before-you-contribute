@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# Audit a repository before contributing: policy first, issue availability second.
+set -uo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+format="text"
+strict=false
+positionals=()
+
+usage() {
+  cat <<'EOF'
+Usage:
+  gh before-you-contribute OWNER/REPO [ISSUE] [options]
+  gh-before-you-contribute OWNER/REPO [ISSUE] [options]
+
+Options:
+  --format text|json  Select output format (default: text).
+  --json              Alias for --format json.
+  --strict            Exit 1 when the policy forbids contributions or the issue is taken.
+  -h, --help          Show this help.
+
+Exit codes:
+  0  Audit completed (and no blocker in strict mode).
+  1  A contribution blocker was found in strict mode.
+  2  Invalid input, missing dependency, or GitHub API error.
+EOF
+}
+
+emit_error() {
+  local message=$1
+  if [[ $format == "json" ]] && command -v jq >/dev/null 2>&1; then
+    jq -n --arg error "$message" '{error: $error}'
+  else
+    printf 'ERROR  %s\n' "$message" >&2
+  fi
+}
+
+while (($#)); do
+  case "$1" in
+    --format)
+      if (($# < 2)); then
+        emit_error "--format requires text or json"
+        exit 2
+      fi
+      format=$2
+      shift 2
+      ;;
+    --format=*)
+      format=${1#*=}
+      shift
+      ;;
+    --json)
+      format="json"
+      shift
+      ;;
+    --strict)
+      strict=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      while (($#)); do
+        positionals+=("$1")
+        shift
+      done
+      ;;
+    -*)
+      emit_error "unknown option: $1"
+      exit 2
+      ;;
+    *)
+      positionals+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ $format != "text" && $format != "json" ]]; then
+  emit_error "unsupported format '$format'; use text or json"
+  exit 2
+fi
+
+if ((${#positionals[@]} < 1 || ${#positionals[@]} > 2)); then
+  usage >&2
+  exit 2
+fi
+
+repository=${positionals[0]}
+issue=${positionals[1]-}
+
+if [[ ! $repository =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  emit_error "repository must use OWNER/REPO syntax"
+  exit 2
+fi
+
+if [[ -n $issue && ! $issue =~ ^[1-9][0-9]*$ ]]; then
+  emit_error "issue must be a positive integer"
+  exit 2
+fi
+
+missing=()
+for dependency in gh jq; do
+  command -v "$dependency" >/dev/null 2>&1 || missing+=("$dependency")
+done
+if ((${#missing[@]})); then
+  emit_error "missing required command(s): ${missing[*]}"
+  exit 2
+fi
+
+if ! gh api "repos/$repository" >/dev/null 2>&1; then
+  emit_error "cannot read $repository through the GitHub API"
+  exit 2
+fi
+
+policy_report=$("$script_dir/bin/ai-policy" "$repository" 2>&1)
+policy_code=$?
+policy_verdict=$(sed -n '1{s/[[:space:]].*//;p;}' <<<"$policy_report")
+if ((policy_code != 0)) && [[ $policy_verdict != "NO-DOCS" ]]; then
+  emit_error "policy audit failed: $policy_report"
+  exit 2
+fi
+
+issue_report=""
+issue_verdict="SKIPPED"
+if [[ -n $issue ]]; then
+  issue_report=$("$script_dir/bin/issue-free" "$repository" "$issue" 2>&1)
+  issue_code=$?
+  issue_verdict=$(sed -n '1{s/[[:space:]].*//;p;}' <<<"$issue_report")
+  if ((issue_code != 0)); then
+    emit_error "issue audit failed: $issue_report"
+    exit 2
+  fi
+fi
+
+verdict="READY"
+if [[ $policy_verdict == "FORBIDDEN" || $issue_verdict == "TAKEN" ]]; then
+  verdict="BLOCKED"
+elif [[ $policy_verdict == "NO-DOCS" || $policy_verdict == "NO-POLICY" ]]; then
+  verdict="REVIEW"
+fi
+
+if [[ $format == "json" ]]; then
+  if [[ -n $issue ]]; then
+    jq -n \
+      --arg repository "$repository" \
+      --arg verdict "$verdict" \
+      --arg policy_verdict "$policy_verdict" \
+      --arg policy_report "$policy_report" \
+      --argjson issue_number "$issue" \
+      --arg issue_verdict "$issue_verdict" \
+      --arg issue_report "$issue_report" \
+      '{
+        repository: $repository,
+        verdict: $verdict,
+        policy: {verdict: $policy_verdict, report: $policy_report},
+        issue: {number: $issue_number, verdict: $issue_verdict, report: $issue_report}
+      }'
+  else
+    jq -n \
+      --arg repository "$repository" \
+      --arg verdict "$verdict" \
+      --arg policy_verdict "$policy_verdict" \
+      --arg policy_report "$policy_report" \
+      '{
+        repository: $repository,
+        verdict: $verdict,
+        policy: {verdict: $policy_verdict, report: $policy_report},
+        issue: null
+      }'
+  fi
+else
+  printf 'BEFORE-YOU-CONTRIBUTE  %s\n\n' "$repository"
+  printf '%s\n' "$policy_report"
+  if [[ -n $issue_report ]]; then
+    printf '\n%s\n' "$issue_report"
+  fi
+  printf '\n%s  %s\n' "$verdict" "$repository"
+fi
+
+if [[ $strict == true && $verdict == "BLOCKED" ]]; then
+  exit 1
+fi

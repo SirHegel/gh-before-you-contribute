@@ -52,3 +52,4 @@ printf '  source: %s\n' "${fuentes[@]}"
 echo "  deciding phrases:"
 grep -Eio ".{0,110}(closed on sight|must disclose|Assisted-by|Co-authored-by|likely to be blocked|autonomous agents|AI[- ]generated|AI tools|LLM).{0,110}" <<<"$corpus" \
   | sed 's/[[:space:]]\+/ /g' | sort -u | head -6 | sed 's/^/    · /'
+exit 0
