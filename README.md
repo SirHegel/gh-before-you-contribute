@@ -108,6 +108,13 @@ export PATH="$PWD/before-you-contribute/bin:$PATH"
 Requires [`gh`](https://cli.github.com/) authenticated, plus `jq`. No other dependencies,
 no network calls beyond the GitHub API.
 
+## Support
+
+For usage questions or reproducible bug reports, open a
+[GitHub issue](https://github.com/SirHegel/before-you-contribute/issues). For support that
+should not be posted publicly, email
+[alvarezruizj289@gmail.com](mailto:alvarezruizj289@gmail.com).
+
 ## Licence
 
 MIT.
