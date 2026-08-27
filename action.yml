@@ -1,0 +1,46 @@
+name: Before You Contribute
+description: Audit contribution policy and issue availability before work starts.
+author: SirHegel
+
+branding:
+  icon: search
+  color: blue
+
+inputs:
+  repository:
+    description: Repository in OWNER/REPO format.
+    required: false
+    default: ${{ github.repository }}
+  issue:
+    description: Optional issue number to check for existing work.
+    required: false
+    default: ''
+  format:
+    description: Output format, either text or json.
+    required: false
+    default: text
+  strict:
+    description: Fail when contributions are forbidden or the issue is taken.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Audit before contributing
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BYC_REPOSITORY: ${{ inputs.repository }}
+        BYC_ISSUE: ${{ inputs.issue }}
+        BYC_FORMAT: ${{ inputs.format }}
+        BYC_STRICT: ${{ inputs.strict }}
+      run: |
+        args=("$BYC_REPOSITORY" --format "$BYC_FORMAT")
+        if [[ -n "$BYC_ISSUE" ]]; then
+          args+=("$BYC_ISSUE")
+        fi
+        if [[ "$BYC_STRICT" == "true" ]]; then
+          args+=(--strict)
+        fi
+        "${{ github.action_path }}/gh-before-you-contribute" "${args[@]}"

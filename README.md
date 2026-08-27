@@ -1,13 +1,47 @@
-# before-you-contribute
+# gh-before-you-contribute
 
-Two shell scripts that answer the two questions worth asking before you write a line of
-code for someone else's project:
+A read-only GitHub CLI extension and GitHub Action that checks the two questions worth
+asking before you write a line of code for someone else's project:
 
 1. **Does this project accept AI-assisted contributions, and on what terms?**
 2. **Is anyone already working on this issue?**
 
-Both are one command, both read GitHub rather than guessing, and both exist because
-getting either one wrong wastes a maintainer's afternoon.
+Both checks are one command. They read evidence from GitHub instead of guessing, and they
+exist because getting either one wrong wastes a maintainer's afternoon.
+
+## Quick start
+
+Install the extension:
+
+```bash
+gh extension install SirHegel/gh-before-you-contribute
+```
+
+Audit a repository, optionally including an issue:
+
+```console
+$ gh before-you-contribute pallets/click
+BLOCKED  pallets/click
+
+$ gh before-you-contribute pytest-dev/pytest 14819 --strict
+BLOCKED  pytest-dev/pytest
+```
+
+The complete report includes the policy sources, deciding phrases, linked pull requests,
+claims of active work, and the repository's final `READY`, `REVIEW`, or `BLOCKED` state.
+Use JSON for automation:
+
+```bash
+gh before-you-contribute owner/repository 123 --json | jq .verdict
+```
+
+`--strict` exits with status 1 for a documented prohibition or a taken issue. Invalid
+input, a missing dependency, or an API failure exits with status 2.
+
+## The underlying checks
+
+The extension preserves two focused commands in `bin/` for users who want to run only
+one check:
 
 ```console
 $ ai-policy pallets/click
@@ -98,22 +132,54 @@ It is not.
 was by the same author but touched a different file for a different bug — the issue really
 was open. The script prints the candidates instead of deciding for you.
 
-## Install
+## GitHub Action
 
-```bash
-git clone https://github.com/SirHegel/before-you-contribute
-export PATH="$PWD/before-you-contribute/bin:$PATH"
+The same audit can stop automated work before a contributor or agent duplicates an open
+pull request:
+
+```yaml
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+steps:
+  - uses: SirHegel/gh-before-you-contribute@v1
+    with:
+      repository: pytest-dev/pytest
+      issue: '14819'
+      format: text
+      strict: 'true'
 ```
 
-Requires [`gh`](https://cli.github.com/) authenticated, plus `jq`. No other dependencies,
-no network calls beyond the GitHub API.
+The Action uses `github.token` and performs read-only API requests. It never writes a
+comment, modifies an issue, submits a pull request, or sends telemetry.
 
-## Support
+## Requirements and development
 
-For usage questions or reproducible bug reports, open a
-[GitHub issue](https://github.com/SirHegel/before-you-contribute/issues). For support that
-should not be posted publicly, email
-[alvarezruizj289@gmail.com](mailto:alvarezruizj289@gmail.com).
+The extension requires an authenticated [`gh`](https://cli.github.com/) command and
+`jq`. It makes no network calls beyond the GitHub API.
+
+To work on it locally:
+
+```bash
+git clone https://github.com/SirHegel/gh-before-you-contribute
+cd gh-before-you-contribute
+tests/run.sh
+shellcheck gh-before-you-contribute bin/* tests/run.sh tests/fixtures/bin/gh
+```
+
+The tests replace `gh` with deterministic fixtures, so they neither consume API quota nor
+depend on changing third-party repositories. See [CONTRIBUTING.md](CONTRIBUTING.md) for the
+evidence and safety rules.
+
+## Support and security
+
+Open a [GitHub issue](https://github.com/SirHegel/gh-before-you-contribute/issues) for
+reproducible bugs and feature requests. Private support is available at
+[alvarezruizj289@gmail.com](mailto:alvarezruizj289@gmail.com); see [SUPPORT.md](SUPPORT.md).
+Report vulnerabilities through GitHub private vulnerability reporting as described in
+[SECURITY.md](SECURITY.md).
 
 ## Licence
 

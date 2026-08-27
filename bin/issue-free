@@ -41,6 +41,7 @@ echo "  $titulo"
 [ -n "$enlazados" ] && { echo "  pull requests GitHub has linked:"; echo "$enlazados"; }
 [ -n "$mencion" ]   && { echo "  open pull requests mentioning the number:"; echo "$mencion"; }
 [ -n "$suyos" ]     && { echo "  open pull requests by the issue author (check whether one covers it):"; echo "$suyos"; }
-[ -n "$reclamo" ] && { echo "  CLAIMED in the issue body:"; sed 's/^/    · /' <<<"$reclamo"; }
-[ -n "$coment" ] && { echo "  CLAIMED in the comments:"; sed 's/^/    · /' <<<"$coment"; }
+[ -n "$reclamo" ] && { echo "  CLAIMED in the issue body:"; printf '    · %s\n' "${reclamo//$'\n'/$'\n    · '}"; }
+[ -n "$coment" ] && { echo "  CLAIMED in the comments:"; printf '    · %s\n' "${coment//$'\n'/$'\n    · '}"; }
 [ -z "$ocupado" ] && echo "  -> no open pull request, no visible claim"
+exit 0
