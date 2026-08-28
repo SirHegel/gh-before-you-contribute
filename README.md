@@ -115,7 +115,8 @@ comment on it. `pytest-dev/pytest#14819` is exactly that: filed by a core mainta
 unassigned, silent, with their own fix three weeks old.
 
 The reliable signal is the issue timeline's `cross-referenced` events, which is where the
-linked pull requests are. The script checks:
+linked pull requests are. A closed issue or an issue assigned to someone is unavailable
+without needing further inference. For an open, unassigned issue, the script checks:
 
 1. **Timeline cross-references** — pull requests GitHub has already linked
 2. **Text search** — open pull requests mentioning the number
@@ -128,9 +129,11 @@ request at all; its author wrote *"I have a working patch and tests, but I would
 check the approach is welcome before sending it."* By every structural signal it is free.
 It is not.
 
-`TAKEN` is a prompt to look, not a verdict. In `scipy/scipy#25955` the linked pull request
-was by the same author but touched a different file for a different bug — the issue really
-was open. The script prints the candidates instead of deciding for you.
+For a closed or assigned issue, `TAKEN` is decisive. For inferred signals it is a prompt
+to look, not a verdict. In `scipy/scipy#25955` the linked pull request was by the same
+author but touched a different file for a different bug — the issue really was open. The
+script prints the candidates instead of deciding for you. If a required API request fails,
+the audit exits with status 2 rather than turning missing evidence into `FREE`.
 
 ## GitHub Action
 
