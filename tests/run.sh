@@ -80,6 +80,19 @@ else
   fail "assigned issues are unavailable"
 fi
 
+mention_json=$(GH_FIXTURE=mention-only "$command" acme/project 42 --json)
+if jq -e '.verdict == "REVIEW" and .issue.verdict == "REVIEW" and (.issue.report | contains("#99 someone"))' >/dev/null <<<"$mention_json"; then
+  pass "ambiguous pull request mentions require review instead of blocking"
+else
+  fail "ambiguous pull request mentions require review instead of blocking"
+fi
+
+if GH_FIXTURE=mention-only "$command" acme/project 42 --strict >/dev/null 2>&1; then
+  pass "strict mode does not reject an ambiguous mention"
+else
+  fail "strict mode does not reject an ambiguous mention"
+fi
+
 if GH_FIXTURE=api-error "$command" acme/project 42 >/dev/null 2>&1; then
   fail "timeline API failures stop the audit"
 elif (($? == 2)); then

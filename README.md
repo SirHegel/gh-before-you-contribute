@@ -129,10 +129,12 @@ request at all; its author wrote *"I have a working patch and tests, but I would
 check the approach is welcome before sending it."* By every structural signal it is free.
 It is not.
 
-For a closed or assigned issue, `TAKEN` is decisive. For inferred signals it is a prompt
-to look, not a verdict. In `scipy/scipy#25955` the linked pull request was by the same
-author but touched a different file for a different bug — the issue really was open. The
-script prints the candidates instead of deciding for you. If a required API request fails,
+For a closed or assigned issue, a linked open pull request, or an explicit claim, `TAKEN`
+is decisive. A text-search hit without a timeline link produces `REVIEW`, because a pull
+request can mention the same number as an example, a dependency issue, or a rejected
+alternative. In `scipy/scipy#25955` the candidate pull request was by the same author but
+touched a different file for a different bug — the issue really was open. The script
+prints weaker candidates instead of deciding for you. If a required API request fails,
 the audit exits with status 2 rather than turning missing evidence into `FREE`.
 
 ## GitHub Action

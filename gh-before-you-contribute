@@ -139,7 +139,7 @@ fi
 verdict="READY"
 if [[ $policy_verdict == "FORBIDDEN" || $issue_verdict == "TAKEN" ]]; then
   verdict="BLOCKED"
-elif [[ $policy_verdict == "NO-DOCS" || $policy_verdict == "NO-POLICY" ]]; then
+elif [[ $policy_verdict == "NO-DOCS" || $policy_verdict == "NO-POLICY" || $issue_verdict == "REVIEW" ]]; then
   verdict="REVIEW"
 fi
 
