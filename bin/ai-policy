@@ -7,26 +7,80 @@
 #
 # Salida: FORBIDDEN | DISCLOSE | RESPONSIBLE-USE | NO-POLICY  + las frases que lo deciden.
 set -uo pipefail
-repo="${1:?usage: ai-policy org/repo}"; org="${repo%%/*}"
 
-leer() { gh api "repos/$1/contents/$2" --jq .content 2>/dev/null | base64 -d 2>/dev/null; }
+if (($# != 1)) || [[ ! $1 =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "usage: ai-policy OWNER/REPO" >&2
+  exit 2
+fi
+
+repo=$1
+org=${repo%%/*}
+
+api_error() {
+  printf 'API ERROR  %s\n' "$1" >&2
+  return 2
+}
+
+# The raw media type avoids a platform-specific base64 decoder. A missing file
+# is expected while probing the known policy locations; every other API failure
+# must stop the audit so that missing evidence cannot become NO-DOCS.
+leer() {
+  local owner=$1
+  local path=$2
+  local response
+
+  if response=$(gh api "repos/$owner/contents/$path" \
+    -H 'Accept: application/vnd.github.raw+json' 2>&1); then
+    printf '%s\n' "$response"
+    return 0
+  fi
+
+  if [[ $response == *"HTTP 404"* ]]; then
+    return 4
+  fi
+
+  api_error "cannot read $owner/$path: $response"
+}
+
+agregar_fuente() {
+  local owner=$1
+  local path=$2
+  local content
+  local status
+
+  if content=$(leer "$owner" "$path"); then
+    if [[ -n $content ]]; then
+      corpus+="$content"$'\n'
+      fuentes+=("$owner/$path")
+    fi
+    return 0
+  else
+    status=$?
+  fi
+
+  [[ $status == 4 ]] && return 0
+  return "$status"
+}
 
 corpus=""; fuentes=()
 # 1. ORGANISATION level - the source people skip, and the one that closed the Click PR.
 for f in CONTRIBUTING.md AI_POLICY.md POLICY.md profile/README.md; do
-  c=$(leer "$org/.github" "$f") && [ -n "$c" ] && { corpus+="$c"$'\n'; fuentes+=("$org/.github/$f"); }
+  agregar_fuente "$org/.github" "$f" || exit 2
 done
 # 2. REPOSITORY level.
 for f in CONTRIBUTING.md CONTRIBUTING.rst .github/CONTRIBUTING.md AI_POLICY.md AGENTS.md \
          CODE_OF_CONDUCT.md .github/PULL_REQUEST_TEMPLATE.md .github/pull_request_template.md \
          docs/contributing.md docs/contributing.rst docs/CONTRIBUTING.md \
          Documentation/HOWTO-CONTRIBUTING.md; do
-  c=$(leer "$repo" "$f") && [ -n "$c" ] && { corpus+="$c"$'\n'; fuentes+=("$repo/$f"); }
+  agregar_fuente "$repo" "$f" || exit 2
 done
 # 3. The project site linked from the repo (Pallets publishes its ban there).
-web=$(gh api "repos/$repo" --jq '.homepage // empty' 2>/dev/null)
+if ! web=$(gh api "repos/$repo" --jq '.homepage // empty' 2>&1); then
+  api_error "cannot read repository metadata for $repo: $web"
+  exit 2
+fi
 
-if [ -z "$corpus" ]; then echo "NO-DOCS  $repo"; [ -n "$web" ] && echo "  revisar a mano: $web"; exit 2; fi
+if [ -z "$corpus" ]; then echo "NO-DOCS  $repo"; [ -n "$web" ] && echo "  revisar a mano: $web"; exit 0; fi
 
 clasifica() { grep -Eiq "$1" <<<"$corpus"; }
 # Unambiguous prohibitions only. No optional "(not )?": Rust's policy says

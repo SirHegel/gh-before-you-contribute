@@ -119,7 +119,7 @@ fi
 policy_report=$("$script_dir/bin/ai-policy" "$repository" 2>&1)
 policy_code=$?
 policy_verdict=$(sed -n '1{s/[[:space:]].*//;p;}' <<<"$policy_report")
-if ((policy_code != 0)) && [[ $policy_verdict != "NO-DOCS" ]]; then
+if ((policy_code != 0)); then
   emit_error "policy audit failed: $policy_report"
   exit 2
 fi

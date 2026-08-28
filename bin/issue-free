@@ -5,33 +5,98 @@
 # "no assignee, no comments" detects nothing: a maintainer who files an issue
 # and fixes it does neither. You have to look at the pull requests.
 set -uo pipefail
-repo="${1:?usage: issue-free org/repo number}"; num="${2:?issue number required}"
 
-info=$(gh api "repos/$repo/issues/$num" 2>/dev/null) || { echo "NOT FOUND  $repo#$num"; exit 2; }
-autor=$(jq -r .user.login <<<"$info"); estado=$(jq -r .state <<<"$info")
-asig=$(jq -r '.assignee.login // "nobody"' <<<"$info"); titulo=$(jq -r .title <<<"$info")
+if (($# != 2)); then
+  echo "usage: issue-free org/repo number" >&2
+  exit 2
+fi
+
+repo=$1
+num=$2
+
+if [[ ! $repo =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "INVALID  repository must use OWNER/REPO syntax" >&2
+  exit 2
+fi
+if [[ ! $num =~ ^[1-9][0-9]*$ ]]; then
+  echo "INVALID  issue number must be a positive integer" >&2
+  exit 2
+fi
+
+api_error() {
+  printf 'API ERROR  %s\n' "$1" >&2
+  exit 2
+}
+
+read_api() {
+  local description=$1
+  shift
+  local response
+
+  if ! response=$(gh api "$@" 2>&1); then
+    printf 'API ERROR  %s: %s\n' "$description" "$response" >&2
+    return 2
+  fi
+
+  printf '%s\n' "$response"
+}
+
+info=$(read_api "cannot read $repo#$num" "repos/$repo/issues/$num") || exit 2
+autor=$(jq -er '.user.login | strings' <<<"$info" 2>/dev/null) \
+  || api_error "GitHub returned an invalid issue author for $repo#$num"
+estado=$(jq -er '.state | select(. == "open" or . == "closed")' <<<"$info" 2>/dev/null) \
+  || api_error "GitHub returned an invalid issue state for $repo#$num"
+asig=$(jq -er '.assignee.login // "nobody"' <<<"$info" 2>/dev/null) \
+  || api_error "GitHub returned invalid assignment data for $repo#$num"
+titulo=$(jq -er '.title | strings' <<<"$info" 2>/dev/null) \
+  || api_error "GitHub returned an invalid issue title for $repo#$num"
+cuerpo=$(jq -er '.body // ""' <<<"$info" 2>/dev/null) \
+  || api_error "GitHub returned an invalid issue body for $repo#$num"
+
+# A closed or assigned issue is never available for new work. Stop before
+# making extra requests so a later API failure cannot obscure that known fact.
+if [[ $estado == "closed" || $asig != "nobody" ]]; then
+  echo "TAKEN  $repo#$num  ($estado, author $autor, assigned to $asig)"
+  echo "  $titulo"
+  [[ $estado == "closed" ]] && echo "  -> the issue is closed"
+  [[ $asig != "nobody" ]] && echo "  -> assigned to $asig"
+  exit 0
+fi
 
 # 1. Cross-references: pull requests GitHub has already linked to this issue.
-enlazados=$(gh api "repos/$repo/issues/$num/timeline" --paginate 2>/dev/null \
-  | jq -r '.[] | select(.event=="cross-referenced") | .source.issue
+timeline=$(read_api "cannot read the timeline for $repo#$num" \
+  "repos/$repo/issues/$num/timeline" --paginate) || exit 2
+if ! enlazados=$(jq -r '.[] | select(.event=="cross-referenced") | .source.issue
            | select(.pull_request != null) | select(.state=="open")
-           | "  #\(.number) \(.user.login) \(.created_at[0:10]) \(.title[0:52])"' 2>/dev/null | sort -u)
+           | "  #\(.number) \(.user.login) \(.created_at[0:10]) \(.title[0:52])"' \
+  <<<"$timeline" 2>/dev/null | sort -u); then
+  api_error "GitHub returned an invalid timeline for $repo#$num"
+fi
 
 # 2. Text search: open pull requests mentioning the number.
-mencion=$(gh api "search/issues?q=repo:$repo+is:pr+is:open+$num" \
-  --jq '.items[] | "  #\(.number) \(.user.login) \(.created_at[0:10]) \(.title[0:52])"' 2>/dev/null | sort -u)
+mencion=$(read_api "cannot search pull requests mentioning $repo#$num" \
+  "search/issues?q=repo:$repo+is:pr+is:open+$num" \
+  --jq '.items[] | "  #\(.number) \(.user.login) \(.created_at[0:10]) \(.title[0:52])"') \
+  || exit 2
+mencion=$(sort -u <<<"$mencion")
 
 # 3. Does the issue author have open pull requests here? People fix what they report.
-suyos=$(gh api "search/issues?q=repo:$repo+is:pr+is:open+author:$autor" \
-  --jq '.items[] | "  #\(.number) \(.created_at[0:10]) \(.title[0:52])"' 2>/dev/null | head -6)
+suyos=$(read_api "cannot search pull requests by $autor in $repo" \
+  "search/issues?q=repo:$repo+is:pr+is:open+author:$autor" \
+  --jq '.items[] | "  #\(.number) \(.created_at[0:10]) \(.title[0:52])"') \
+  || exit 2
+suyos=$(head -6 <<<"$suyos")
 
 # 4. A claim in prose: no pull request yet, but someone says they are on it.
 #    jsonschema#1536 had no pull request; its body said "I have a working patch and tests".
-cuerpo=$(jq -r '.body // ""' <<<"$info")
 reclamo=$(grep -Eio ".{0,60}(I have (a |an )?(working )?(patch|fix|PR)|I(.| a)?m working on (this|it)|I(.| wi)?ll (open|send|submit) (a )?(PR|pull request)|will open a PR|assign (this |it )?to me|I would like to (work on|take) th).{0,60}" <<<"$cuerpo" | head -3)
 # And in the comments, in case someone claimed it later.
-coment=$(gh api "repos/$repo/issues/$num/comments" --paginate 2>/dev/null | jq -r '.[] | "\(.user.login): \(.body)"' 2>/dev/null \
-  | grep -Eio ".{0,50}(I(.| a)?m working on|I(.| wi)?ll (open|send|submit)|assign (this|it) to me|I would like to (work on|take)).{0,60}" | head -3)
+comments=$(read_api "cannot read comments for $repo#$num" \
+  "repos/$repo/issues/$num/comments" --paginate) || exit 2
+comment_text=$(jq -r '.[] | "\(.user.login): \(.body)"' <<<"$comments" 2>/dev/null) \
+  || api_error "GitHub returned invalid comments for $repo#$num"
+coment=$(grep -Eio ".{0,50}(I(.| a)?m working on|I(.| wi)?ll (open|send|submit)|assign (this|it) to me|I would like to (work on|take)).{0,60}" \
+  <<<"$comment_text" | head -3)
 
 ocupado=""
 [ -n "$enlazados$mencion$reclamo$coment" ] && ocupado=1
