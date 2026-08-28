@@ -1,0 +1,47 @@
+name: Feature request
+description: Propose a new evidence source or a safer, more explainable audit behavior.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Contribution problem
+      description: Describe the real contributor or maintainer workflow that is not covered today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Proposed evidence
+      description: Which read-only GitHub signal should the tool inspect, and how can a user verify the decision?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: failure
+    attributes:
+      label: Safe failure mode
+      description: What should happen when the evidence is missing, ambiguous, or unavailable?
+      options:
+        - Return REVIEW and print the ambiguity
+        - Return an explicit API/error status
+        - Return BLOCKED because the signal is decisive
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Public examples
+      description: Link contrasting public repositories or issues that fixtures can model without live API calls.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Project boundaries
+      options:
+        - label: The proposal stays read-only and does not automate comments, claims, pull requests, or telemetry.
+          required: true
