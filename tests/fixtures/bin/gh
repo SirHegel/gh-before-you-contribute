@@ -28,6 +28,9 @@ case "$endpoint" in
     if [[ $scenario == "policy-api-error" && $endpoint == "repos/acme/.github/contents/CONTRIBUTING.md" ]]; then
       printf '%s\n' 'gh: forbidden (HTTP 403)' >&2
       exit 1
+    elif [[ $scenario == "attributed-policy" && $endpoint == "repos/acme/.github/contents/CONTRIBUTING.md" ]]; then
+      printf '%s\n' 'AI tools may be used responsibly when the contributor reviews every change.'
+      exit 0
     fi
     printf '%s\n' 'gh: Not Found (HTTP 404)' >&2
     exit 1
@@ -38,6 +41,15 @@ case "$endpoint" in
       exit 1
     elif [[ $scenario == "blocked" ]]; then
       printf '%s\n' 'AI-generated pull requests are forbidden.'
+    elif [[ $scenario == "no-policy" ]]; then
+      printf '%s\n' 'Please run the complete test suite and update the documentation.'
+    elif [[ $scenario == "constraint-policy" ]]; then
+      printf '%s\n' 'AI tools may be used responsibly. Only human beings can ever be credited.'
+    elif [[ $scenario == "unicode-evidence" ]]; then
+      printf '%s\n' 'AI tools are allowed, but contributors must disclose "material" use — revisión humana.'
+    elif [[ $scenario == "unicode-boundary" ]]; then
+      printf 'é%.0s' {1..80}
+      printf '%s\n' 'xAI tools are allowed, but contributors must disclose "material" use — revisión humana.'
     else
       printf '%s\n' 'AI tools are allowed, but contributors must disclose their use.'
     fi
@@ -55,7 +67,11 @@ case "$endpoint" in
         printf '%s\n' '{"user":{"login":"octocat"},"state":"open","assignee":{"login":"maintainer"},"title":"Repair the flux capacitor","body":"Please add a regression test."}'
         ;;
       *)
-        printf '%s\n' '{"user":{"login":"octocat"},"state":"open","assignee":null,"title":"Repair the flux capacitor","body":"Please add a regression test."}'
+        if [[ $scenario == "body-claim" ]]; then
+          printf '%s\n' '{"user":{"login":"octocat"},"state":"open","assignee":null,"title":"Repair the flux capacitor","body":"I have a working patch and tests, but I want feedback first.","html_url":"https://github.com/acme/project/issues/42"}'
+        else
+          printf '%s\n' '{"user":{"login":"octocat"},"state":"open","assignee":null,"title":"Repair the flux capacitor","body":"Please add a regression test.","html_url":"https://github.com/acme/project/issues/42"}'
+        fi
         ;;
     esac
     ;;
@@ -63,23 +79,49 @@ case "$endpoint" in
     if [[ $scenario == "api-error" || $scenario == "assigned" ]]; then
       printf '%s\n' 'simulated timeline failure' >&2
       exit 1
+    elif [[ $scenario == "empty-timeline-body" ]]; then
+      :
     elif [[ $scenario == "blocked" ]]; then
-      printf '%s\n' '[{"event":"cross-referenced","source":{"issue":{"number":43,"title":"Fixes 42","state":"open","created_at":"2026-08-27T00:00:00Z","user":{"login":"contributor"},"pull_request":{}}}}]'
+      printf '%s\n' '[{"event":"cross-referenced","source":{"issue":{"number":43,"title":"Fixes 42","state":"open","created_at":"2026-08-27T00:00:00Z","html_url":"https://github.com/acme/project/pull/43","user":{"login":"contributor"},"pull_request":{}}}}]'
+    elif [[ $scenario == "cross-repo-same-number" ]]; then
+      printf '%s\n' '[{"event":"cross-referenced","source":{"issue":{"number":43,"title":"Fixes 42 in the target repository","state":"open","created_at":"2026-08-27T00:00:00Z","html_url":"https://github.com/acme/project/pull/43","user":{"login":"contributor"},"pull_request":{}}}},{"event":"cross-referenced","source":{"issue":{"number":43,"title":"Alternative fix from a fork","state":"open","created_at":"2026-08-28T00:00:00Z","html_url":"https://github.com/fork/project/pull/43","user":{"login":"fork-author"},"pull_request":{}}}}]'
+    elif [[ $scenario == "invalid-cross-reference" ]]; then
+      printf '%s\n' '[{"event":"cross-referenced","source":{"issue":{"number":43,"title":"Missing state","created_at":"2026-08-27T00:00:00Z","html_url":"https://github.com/acme/project/pull/43","user":{"login":"contributor"},"pull_request":{}}}}]'
     else
       printf '%s\n' '[]'
     fi
     ;;
   search/issues\?q=*)
-    if [[ $scenario == "mention-only" && $arguments == *" --jq "* && $endpoint == *"+is:open+42" ]]; then
-      printf '%s\n' '  #99 someone 2026-08-27 Document an unrelated example using 42'
+    if [[ $scenario == "mention-only" && $endpoint == *"+is:open+42" ]]; then
+      if [[ $arguments == *" --jq "* ]]; then
+        printf '%s\n' '  #99 someone 2026-08-27 Document an unrelated example using 42'
+      else
+        printf '%s\n' '{"total_count":1,"incomplete_results":false,"items":[{"number":99,"user":{"login":"someone"},"created_at":"2026-08-27T00:00:00Z","title":"Document an unrelated example using 42","html_url":"https://github.com/acme/project/pull/99"}]}'
+      fi
+    elif [[ $scenario == "author-pr" && $endpoint == *"+author:octocat" ]]; then
+      if [[ $arguments == *" --jq "* ]]; then
+        printf '%s\n' '  #77 2026-08-26 Refactor a neighboring subsystem'
+      else
+        printf '%s\n' '{"total_count":1,"incomplete_results":false,"items":[{"number":77,"user":{"login":"octocat"},"created_at":"2026-08-26T00:00:00Z","title":"Refactor a neighboring subsystem","html_url":"https://github.com/acme/project/pull/77"}]}'
+      fi
+    elif [[ $scenario == "incomplete-search" && $endpoint == *"+is:open+42" ]]; then
+      printf '%s\n' '{"total_count":1,"incomplete_results":true,"items":[]}'
+    elif [[ $scenario == "inconsistent-search" && $endpoint == *"+is:open+42" ]]; then
+      printf '%s\n' '{"total_count":1,"incomplete_results":false,"items":[]}'
     elif [[ $arguments == *" --jq "* ]]; then
       :
     else
-      printf '%s\n' '{"items":[]}'
+      printf '%s\n' '{"total_count":0,"incomplete_results":false,"items":[]}'
     fi
     ;;
   repos/acme/project/issues/42/comments)
-    printf '%s\n' '[]'
+    if [[ $scenario == "comment-claim" ]]; then
+      printf '%s\n' '[{"user":{"login":"contributor"},"body":"I am working on this and will send a PR tomorrow.","created_at":"2026-08-27T12:00:00Z","html_url":"https://github.com/acme/project/issues/42#issuecomment-1"}]'
+    elif [[ $scenario == "empty-comments-body" ]]; then
+      :
+    else
+      printf '%s\n' '[]'
+    fi
     ;;
   *)
     printf 'unexpected endpoint: %s\n' "$endpoint" >&2

@@ -6,6 +6,12 @@
 # and fixes it does neither. You have to look at the pull requests.
 set -uo pipefail
 
+output_format="text"
+if (($# == 3)) && [[ $3 == "--json" ]]; then
+  output_format="json"
+  set -- "$1" "$2"
+fi
+
 if (($# != 2)); then
   echo "usage: issue-free org/repo number" >&2
   exit 2
@@ -41,6 +47,70 @@ read_api() {
   printf '%s\n' "$response"
 }
 
+json_append() {
+  local array=$1
+  local item=$2
+
+  jq -cn --argjson array "$array" --argjson item "$item" '$array + [$item]'
+}
+
+extract_context() {
+  local content=$1
+  local regex=$2
+  local before=$3
+  local after=$4
+  local limit=$5
+  local pattern=".{0,$before}($regex).{0,$after}"
+
+  jq -Rrs --arg pattern "$pattern" '
+    [
+      split("\n")[]
+      | match($pattern; "ig").string
+      | gsub("\\s+"; " ")
+      | select(length > 0)
+    ]
+    | .[]
+  ' <<<"$content" | sort -u | sed -n "1,${limit}p"
+}
+
+emit_result() {
+  local verdict=$1
+  local report=$2
+  local signals_json=$3
+  local assignee_json="null"
+
+  if [[ $output_format == "text" ]]; then
+    printf '%s\n' "$report"
+    return
+  fi
+
+  if [[ $asig != "nobody" ]]; then
+    assignee_json=$(jq -cn --arg assignee "$asig" '$assignee') || return 2
+  fi
+
+  jq -n \
+    --arg verdict "$verdict" \
+    --arg report "$report" \
+    --argjson number "$num" \
+    --arg state "$estado" \
+    --arg title "$titulo" \
+    --arg author "$autor" \
+    --argjson assignee "$assignee_json" \
+    --arg url "$issue_url" \
+    --argjson signals "$signals_json" \
+    '{
+      number: $number,
+      verdict: $verdict,
+      report: $report,
+      state: $state,
+      title: $title,
+      author: $author,
+      assignee: $assignee,
+      url: $url,
+      signals: $signals
+    }'
+}
+
 info=$(read_api "cannot read $repo#$num" "repos/$repo/issues/$num") || exit 2
 autor=$(jq -er '.user.login | strings' <<<"$info" 2>/dev/null) \
   || api_error "GitHub returned an invalid issue author for $repo#$num"
@@ -52,51 +122,267 @@ titulo=$(jq -er '.title | strings' <<<"$info" 2>/dev/null) \
   || api_error "GitHub returned an invalid issue title for $repo#$num"
 cuerpo=$(jq -er '.body // ""' <<<"$info" 2>/dev/null) \
   || api_error "GitHub returned an invalid issue body for $repo#$num"
+issue_url=$(jq -er --arg fallback "https://github.com/$repo/issues/$num" \
+  '.html_url // $fallback | strings' <<<"$info" 2>/dev/null) \
+  || api_error "GitHub returned an invalid issue URL for $repo#$num"
 
 # A closed or assigned issue is never available for new work. Stop before
 # making extra requests so a later API failure cannot obscure that known fact.
 if [[ $estado == "closed" || $asig != "nobody" ]]; then
-  echo "TAKEN  $repo#$num  ($estado, author $autor, assigned to $asig)"
-  echo "  $titulo"
-  [[ $estado == "closed" ]] && echo "  -> the issue is closed"
-  [[ $asig != "nobody" ]] && echo "  -> assigned to $asig"
+  signals='[]'
+  if [[ $estado == "closed" ]]; then
+    signal=$(jq -cn \
+      --arg url "$issue_url" \
+      '{kind: "issue_closed", strength: "decisive", source: "issue_state", url: $url}') \
+      || api_error "cannot encode closed-issue evidence for $repo#$num"
+    signals=$(json_append "$signals" "$signal") \
+      || api_error "cannot encode closed-issue evidence for $repo#$num"
+  fi
+  if [[ $asig != "nobody" ]]; then
+    signal=$(jq -cn \
+      --arg actor "$asig" \
+      --arg url "$issue_url" \
+      '{kind: "issue_assigned", strength: "decisive", source: "issue_assignment", actor: $actor, url: $url}') \
+      || api_error "cannot encode assignment evidence for $repo#$num"
+    signals=$(json_append "$signals" "$signal") \
+      || api_error "cannot encode assignment evidence for $repo#$num"
+  fi
+  report=$(
+    echo "TAKEN  $repo#$num  ($estado, author $autor, assigned to $asig)"
+    echo "  $titulo"
+    [[ $estado == "closed" ]] && echo "  -> the issue is closed"
+    [[ $asig != "nobody" ]] && echo "  -> assigned to $asig"
+  )
+  emit_result "TAKEN" "$report" "$signals" || exit 2
   exit 0
 fi
 
 # 1. Cross-references: pull requests GitHub has already linked to this issue.
 timeline=$(read_api "cannot read the timeline for $repo#$num" \
   "repos/$repo/issues/$num/timeline" --paginate) || exit 2
+if ! timeline_all=$(jq -ecs '
+  if length > 0 and all(.[]; type == "array") then add // []
+  else error("timeline pages must be arrays")
+  end
+' <<<"$timeline" 2>/dev/null); then
+  api_error "GitHub returned an invalid timeline for $repo#$num"
+fi
+if ! jq -e '
+  [
+    .[]
+    | select(.event == "cross-referenced")
+    | .source.issue
+    | select(.pull_request != null)
+  ] as $pull_requests
+  | all($pull_requests[];
+      (.pull_request | type) == "object"
+      and (.number | type) == "number"
+      and .number >= 1
+      and .number == (.number | floor)
+      and (.state == "open" or .state == "closed")
+      and (.user.login | type) == "string"
+      and (.user.login | length) > 0
+      and (.created_at | type) == "string"
+      and (.created_at | length) >= 10
+      and (.title | type) == "string"
+      and (.html_url | type) == "string"
+      and (.html_url | length) > 0)
+' >/dev/null 2>&1 <<<"$timeline_all"; then
+  api_error "GitHub returned an invalid pull request cross-reference for $repo#$num"
+fi
 if ! enlazados=$(jq -r '.[] | select(.event=="cross-referenced") | .source.issue
            | select(.pull_request != null) | select(.state=="open")
            | "  #\(.number) \(.user.login) \(.created_at[0:10]) \(.title[0:52])"' \
-  <<<"$timeline" 2>/dev/null | sort -u); then
+  <<<"$timeline_all" 2>/dev/null | sort -u); then
   api_error "GitHub returned an invalid timeline for $repo#$num"
 fi
+linked_signals=$(jq -c --arg repo "$repo" '
+  [
+    .[]
+    | select(.event == "cross-referenced")
+    | .source.issue
+    | select(.pull_request != null and .state == "open")
+    | {
+        kind: "linked_open_pull_request",
+        strength: "decisive",
+        source: "timeline_cross_reference",
+        number: .number,
+        actor: (.user.login // null),
+        createdAt: (.created_at // null),
+        title: ((.title // "")[0:120]),
+        url: (.html_url // ("https://github.com/" + $repo + "/pull/" + (.number | tostring)))
+      }
+  ]
+  | unique_by(.url)
+  | map(with_entries(select(.value != null and .value != "")))
+' <<<"$timeline_all") || api_error "GitHub returned invalid linked pull requests for $repo#$num"
 
 # 2. Text search: open pull requests mentioning the number.
-mencion=$(read_api "cannot search pull requests mentioning $repo#$num" \
-  "search/issues?q=repo:$repo+is:pr+is:open+$num" \
-  --jq '.items[] | "  #\(.number) \(.user.login) \(.created_at[0:10]) \(.title[0:52])"') \
+mention_data=$(read_api "cannot search pull requests mentioning $repo#$num" \
+  "search/issues?q=repo:$repo+is:pr+is:open+$num") \
   || exit 2
+if ! mention_data=$(jq -ec '
+  if (.items | type) == "array"
+    and (.total_count | type) == "number"
+    and .total_count >= 0
+    and .total_count == (.total_count | floor)
+    and .total_count >= (.items | length)
+    and (.total_count == 0 or (.items | length) > 0)
+    and .incomplete_results == false
+  then .
+  else error("search results must be complete and items must be an array")
+  end
+' <<<"$mention_data" 2>/dev/null); then
+  api_error "GitHub returned incomplete or invalid pull request search results for $repo#$num"
+fi
+if ! mencion=$(jq -r '.items | arrays | .[]
+  | "  #\(.number) \(.user.login) \(.created_at[0:10]) \(.title[0:52])"' \
+  <<<"$mention_data" 2>/dev/null); then
+  api_error "GitHub returned invalid pull request search results for $repo#$num"
+fi
 mencion=$(sort -u <<<"$mencion")
+mention_signals=$(jq -c --arg repo "$repo" '
+  [
+    .items[]
+    | {
+        kind: "unlinked_pull_request_mention",
+        strength: "advisory",
+        source: "pull_request_search",
+        number: .number,
+        actor: (.user.login // null),
+        createdAt: (.created_at // null),
+        title: ((.title // "")[0:120]),
+        url: (.html_url // ("https://github.com/" + $repo + "/pull/" + (.number | tostring)))
+      }
+  ]
+  | unique_by(.url)
+  | map(with_entries(select(.value != null and .value != "")))
+' <<<"$mention_data" 2>/dev/null) \
+  || api_error "GitHub returned invalid pull request search evidence for $repo#$num"
 
 # 3. Does the issue author have open pull requests here? People fix what they report.
-suyos=$(read_api "cannot search pull requests by $autor in $repo" \
-  "search/issues?q=repo:$repo+is:pr+is:open+author:$autor" \
-  --jq '.items[] | "  #\(.number) \(.created_at[0:10]) \(.title[0:52])"') \
+author_pr_data=$(read_api "cannot search pull requests by $autor in $repo" \
+  "search/issues?q=repo:$repo+is:pr+is:open+author:$autor") \
   || exit 2
-suyos=$(head -6 <<<"$suyos")
+if ! author_pr_data=$(jq -ec '
+  if (.items | type) == "array"
+    and (.total_count | type) == "number"
+    and .total_count >= 0
+    and .total_count == (.total_count | floor)
+    and .total_count >= (.items | length)
+    and (.total_count == 0 or (.items | length) > 0)
+    and .incomplete_results == false
+  then .
+  else error("search results must be complete and items must be an array")
+  end
+' <<<"$author_pr_data" 2>/dev/null); then
+  api_error "GitHub returned incomplete or invalid author pull request results for $repo#$num"
+fi
+if ! suyos=$(jq -r '.items[:6][]
+  | "  #\(.number) \(.created_at[0:10]) \(.title[0:52])"' \
+  <<<"$author_pr_data" 2>/dev/null); then
+  api_error "GitHub returned invalid author pull request results for $repo#$num"
+fi
+author_pr_signals=$(jq -c --arg repo "$repo" '
+  [
+    .items[:6][]
+    | {
+        kind: "author_open_pull_request",
+        strength: "context",
+        source: "author_pull_request_search",
+        number: .number,
+        actor: (.user.login // null),
+        createdAt: (.created_at // null),
+        title: ((.title // "")[0:120]),
+        url: (.html_url // ("https://github.com/" + $repo + "/pull/" + (.number | tostring)))
+      }
+  ]
+  | unique_by(.url)
+  | map(with_entries(select(.value != null and .value != "")))
+' <<<"$author_pr_data" 2>/dev/null) \
+  || api_error "GitHub returned invalid author pull request evidence for $repo#$num"
 
 # 4. A claim in prose: no pull request yet, but someone says they are on it.
 #    jsonschema#1536 had no pull request; its body said "I have a working patch and tests".
-reclamo=$(grep -Eio ".{0,60}(I have (a |an )?(working )?(patch|fix|PR)|I(.| a)?m working on (this|it)|I(.| wi)?ll (open|send|submit) (a )?(PR|pull request)|will open a PR|assign (this |it )?to me|I would like to (work on|take) th).{0,60}" <<<"$cuerpo" | head -3)
+body_claim_regex='I have (a |an )?(working )?(patch|fix|PR)|I(.| a)?m working on (this|it)|I(.| wi)?ll (open|send|submit) (a )?(PR|pull request)|will open a PR|assign (this |it )?to me|I would like to (work on|take) th'
+comment_claim_regex='I(.| a)?m working on|I(.| wi)?ll (open|send|submit)|assign (this|it) to me|I would like to (work on|take)'
+reclamo=$(extract_context "$cuerpo" "$body_claim_regex" 60 60 3) \
+  || api_error "cannot extract claims from the body of $repo#$num"
 # And in the comments, in case someone claimed it later.
 comments=$(read_api "cannot read comments for $repo#$num" \
   "repos/$repo/issues/$num/comments" --paginate) || exit 2
-comment_text=$(jq -r '.[] | "\(.user.login): \(.body)"' <<<"$comments" 2>/dev/null) \
+if ! comments_all=$(jq -ecs '
+  if length > 0 and all(.[]; type == "array") then add // []
+  else error("comment pages must be arrays")
+  end
+' <<<"$comments" 2>/dev/null); then
+  api_error "GitHub returned invalid comments for $repo#$num"
+fi
+comment_text=$(jq -r '.[] | "\(.user.login): \(.body)"' <<<"$comments_all" 2>/dev/null) \
   || api_error "GitHub returned invalid comments for $repo#$num"
-coment=$(grep -Eio ".{0,50}(I(.| a)?m working on|I(.| wi)?ll (open|send|submit)|assign (this|it) to me|I would like to (work on|take)).{0,60}" \
-  <<<"$comment_text" | head -3)
+coment=$(extract_context "$comment_text" "$comment_claim_regex" 50 60 3) \
+  || api_error "cannot extract claims from comments on $repo#$num"
+
+body_claim_signals='[]'
+while IFS= read -r excerpt; do
+  [[ -z $excerpt ]] && continue
+  signal=$(jq -cn \
+    --arg actor "$autor" \
+    --arg url "$issue_url" \
+    --arg excerpt "$excerpt" \
+    '{
+      kind: "work_claim",
+      strength: "decisive",
+      source: "issue_body",
+      actor: $actor,
+      url: $url,
+      excerpt: $excerpt[0:180]
+    }') || api_error "cannot encode an issue-body claim for $repo#$num"
+  body_claim_signals=$(json_append "$body_claim_signals" "$signal") \
+    || api_error "cannot encode an issue-body claim for $repo#$num"
+done <<<"$reclamo"
+
+comment_claim_signals='[]'
+comment_claim_count=0
+while IFS= read -r encoded_comment; do
+  ((comment_claim_count >= 3)) && break
+  comment=$(jq -Rr '@base64d' <<<"$encoded_comment") \
+    || api_error "GitHub returned invalid comment evidence for $repo#$num"
+  comment_actor=$(jq -er '.user.login // "unknown" | strings' <<<"$comment") \
+    || api_error "GitHub returned an invalid comment author for $repo#$num"
+  comment_url=$(jq -er --arg fallback "$issue_url" '.html_url // $fallback | strings' <<<"$comment") \
+    || api_error "GitHub returned an invalid comment URL for $repo#$num"
+  comment_created_at=$(jq -er '.created_at // "" | strings' <<<"$comment") \
+    || api_error "GitHub returned an invalid comment timestamp for $repo#$num"
+  comment_body=$(jq -er '.body // "" | strings' <<<"$comment") \
+    || api_error "GitHub returned an invalid comment body for $repo#$num"
+  comment_claim_excerpts=$(extract_context "$comment_body" "$comment_claim_regex" 50 60 3) \
+    || api_error "cannot extract a comment claim for $repo#$num"
+
+  while IFS= read -r excerpt; do
+    [[ -z $excerpt ]] && continue
+    signal=$(jq -cn \
+      --arg actor "$comment_actor" \
+      --arg url "$comment_url" \
+      --arg created_at "$comment_created_at" \
+      --arg excerpt "$excerpt" \
+      '{
+        kind: "work_claim",
+        strength: "decisive",
+        source: "issue_comment",
+        actor: $actor,
+        url: $url,
+        createdAt: $created_at,
+        excerpt: $excerpt[0:180]
+      }
+      | with_entries(select(.value != ""))') \
+      || api_error "cannot encode a comment claim for $repo#$num"
+    comment_claim_signals=$(json_append "$comment_claim_signals" "$signal") \
+      || api_error "cannot encode a comment claim for $repo#$num"
+    comment_claim_count=$((comment_claim_count + 1))
+    ((comment_claim_count >= 3)) && break
+  done <<<"$comment_claim_excerpts"
+done < <(jq -r '.[] | @base64' <<<"$comments_all")
 
 ocupado=""
 revision=""
@@ -115,12 +401,24 @@ else
   veredicto="FREE"
 fi
 
-echo "$veredicto  $repo#$num  ($estado, author $autor, assigned to $asig)"
-echo "  $titulo"
-[ -n "$enlazados" ] && { echo "  pull requests GitHub has linked:"; echo "$enlazados"; }
-[ -n "$mencion" ]   && { echo "  open pull requests mentioning the number:"; echo "$mencion"; }
-[ -n "$suyos" ]     && { echo "  open pull requests by the issue author (check whether one covers it):"; echo "$suyos"; }
-[ -n "$reclamo" ] && { echo "  CLAIMED in the issue body:"; printf '    · %s\n' "${reclamo//$'\n'/$'\n    · '}"; }
-[ -n "$coment" ] && { echo "  CLAIMED in the comments:"; printf '    · %s\n' "${coment//$'\n'/$'\n    · '}"; }
-[ -z "$ocupado$revision" ] && echo "  -> no open pull request, no visible claim"
+signals=$(jq -cn \
+  --argjson linked "$linked_signals" \
+  --argjson mentions "$mention_signals" \
+  --argjson author_prs "$author_pr_signals" \
+  --argjson body_claims "$body_claim_signals" \
+  --argjson comment_claims "$comment_claim_signals" \
+  '$linked + $mentions + $author_prs + $body_claims + $comment_claims') \
+  || api_error "cannot combine issue evidence for $repo#$num"
+
+report=$(
+  echo "$veredicto  $repo#$num  ($estado, author $autor, assigned to $asig)"
+  echo "  $titulo"
+  [ -n "$enlazados" ] && { echo "  pull requests GitHub has linked:"; echo "$enlazados"; }
+  [ -n "$mencion" ]   && { echo "  open pull requests mentioning the number:"; echo "$mencion"; }
+  [ -n "$suyos" ]     && { echo "  open pull requests by the issue author (check whether one covers it):"; echo "$suyos"; }
+  [ -n "$reclamo" ] && { echo "  CLAIMED in the issue body:"; printf '    · %s\n' "${reclamo//$'\n'/$'\n    · '}"; }
+  [ -n "$coment" ] && { echo "  CLAIMED in the comments:"; printf '    · %s\n' "${coment//$'\n'/$'\n    · '}"; }
+  [ -z "$ocupado$revision" ] && echo "  -> no open pull request, no visible claim"
+)
+emit_result "$veredicto" "$report" "$signals" || exit 2
 exit 0

@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/SirHegel/gh-before-you-contribute/master/schema/audit-v1.schema.json",
+  "title": "gh-before-you-contribute audit result v1",
+  "description": "A successful, read-only contribution audit with typed and source-attributed evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "repository",
+    "verdict",
+    "policy",
+    "issue"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "verdict": {
+      "enum": [
+        "READY",
+        "REVIEW",
+        "BLOCKED"
+      ]
+    },
+    "policy": {
+      "$ref": "#/$defs/policy"
+    },
+    "issue": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/issue"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verdict",
+        "report",
+        "sources",
+        "matches",
+        "constraints",
+        "manualReview"
+      ],
+      "properties": {
+        "verdict": {
+          "enum": [
+            "FORBIDDEN",
+            "DISCLOSE",
+            "RESPONSIBLE-USE",
+            "NO-POLICY",
+            "NO-DOCS"
+          ]
+        },
+        "report": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/policySource"
+          }
+        },
+        "matches": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/policyMatch"
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "NO_AI_CREDIT"
+            ]
+          }
+        },
+        "manualReview": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/manualReview"
+          }
+        }
+      }
+    },
+    "policySource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "repository",
+        "path",
+        "url"
+      ],
+      "properties": {
+        "scope": {
+          "enum": [
+            "organization",
+            "repository"
+          ]
+        },
+        "repository": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "policyMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule",
+        "effect",
+        "source",
+        "excerpt"
+      ],
+      "properties": {
+        "rule": {
+          "enum": [
+            "forbidden",
+            "disclosure_required",
+            "responsible_use",
+            "no_ai_credit"
+          ]
+        },
+        "effect": {
+          "enum": [
+            "FORBIDDEN",
+            "DISCLOSE",
+            "RESPONSIBLE-USE",
+            "CONSTRAINT"
+          ]
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "scope",
+            "repository",
+            "path"
+          ],
+          "properties": {
+            "scope": {
+              "enum": [
+                "organization",
+                "repository"
+              ]
+            },
+            "repository": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        "excerpt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      }
+    },
+    "manualReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "url",
+        "reason"
+      ],
+      "properties": {
+        "kind": {
+          "const": "homepage"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "reason": {
+          "const": "not_fetched"
+        }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "verdict",
+        "report",
+        "state",
+        "title",
+        "author",
+        "assignee",
+        "url",
+        "signals"
+      ],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "verdict": {
+          "enum": [
+            "FREE",
+            "REVIEW",
+            "TAKEN"
+          ]
+        },
+        "report": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "assignee": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "signals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/issueSignal"
+          }
+        }
+      }
+    },
+    "issueSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "strength",
+        "source",
+        "url"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "issue_closed",
+            "issue_assigned",
+            "linked_open_pull_request",
+            "unlinked_pull_request_mention",
+            "author_open_pull_request",
+            "work_claim"
+          ]
+        },
+        "strength": {
+          "enum": [
+            "decisive",
+            "advisory",
+            "context"
+          ]
+        },
+        "source": {
+          "enum": [
+            "issue_state",
+            "issue_assignment",
+            "timeline_cross_reference",
+            "pull_request_search",
+            "author_pull_request_search",
+            "issue_body",
+            "issue_comment"
+          ]
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "actor": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "excerpt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        }
+      }
+    }
+  }
+}

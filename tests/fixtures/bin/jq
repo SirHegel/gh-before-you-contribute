@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Delegate to the real jq except when a test requests one specific emission failure.
+set -uo pipefail
+
+if [[ -z ${BYC_REAL_JQ:-} || ! -x $BYC_REAL_JQ ]]; then
+  printf 'BYC_REAL_JQ must point to the real jq executable\n' >&2
+  exit 90
+fi
+
+previous=""
+for argument in "$@"; do
+  if [[ $previous == "--argjson" ]]; then
+    case "${JQ_FIXTURE:-}:$argument" in
+      fail-main-emit:policy|fail-policy-emit:sources|fail-issue-emit:signals)
+        exit 42
+        ;;
+    esac
+  fi
+  previous=$argument
+done
+
+exec "$BYC_REAL_JQ" "$@"

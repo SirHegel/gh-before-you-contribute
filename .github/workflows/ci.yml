@@ -17,7 +17,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Lint shell scripts
-        run: shellcheck gh-before-you-contribute bin/* tests/run.sh tests/fixtures/bin/gh
+        run: shellcheck gh-before-you-contribute bin/* tests/run.sh tests/fixtures/bin/*
+
+      - name: Install schema test dependency
+        run: |
+          python3 -m venv "$RUNNER_TEMP/schema-venv"
+          "$RUNNER_TEMP/schema-venv/bin/pip" install --disable-pip-version-check --no-input -r requirements-dev.txt
 
       - name: Run deterministic tests
+        env:
+          SCHEMA_PYTHON: ${{ runner.temp }}/schema-venv/bin/python
         run: tests/run.sh

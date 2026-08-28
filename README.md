@@ -38,6 +38,43 @@ gh before-you-contribute owner/repository 123 --json | jq .verdict
 `--strict` exits with status 1 for a documented prohibition or a taken issue. Invalid
 input, a missing dependency, or an API failure exits with status 2.
 
+## Structured evidence
+
+Successful JSON reports use the checked-in
+[`schema/audit-v1.schema.json`](schema/audit-v1.schema.json) contract and include
+`schemaVersion: 1`. The original `policy.report` and `issue.report` strings remain present
+throughout the 1.x series, but automation no longer needs to parse them:
+
+```bash
+gh before-you-contribute owner/repository 123 --json \
+  | jq '{verdict, policySources: .policy.sources, issueSignals: .issue.signals}'
+```
+
+Policy evidence is source-attributed:
+
+- `policy.sources` identifies the organisation or repository document by path and URL.
+- `policy.matches` identifies the typed rule, its effect, its source, and a deciding
+  excerpt limited to 240 characters.
+- `policy.constraints` keeps rules such as `NO_AI_CREDIT` separate from the stable policy
+  verdict.
+- `policy.manualReview` records a linked homepage that the read-only GitHub API audit did
+  not fetch. For `NO-DOCS`, sources and matches are empty while this reason remains
+  explicit.
+
+Issue signals record why work is unavailable or needs review:
+
+| Signal | Strength | Effect on the current verdict |
+|---|---|---|
+| closed issue, assignment, linked open PR, explicit work claim | `decisive` | `TAKEN` |
+| unlinked PR text-search match | `advisory` | `REVIEW` |
+| another open PR by the issue author | `context` | printed for review; not decisive |
+
+Claim excerpts are limited to 180 characters. Structured output has no raw document,
+issue-body, or comment-body fields; it emits only the bounded matching excerpts. A short
+source can fit entirely inside that bound, so treat reports from private repositories as
+sensitive. API failures still exit with status 2 and, in JSON mode, return an `error`
+object instead of a partial audit.
+
 ## The underlying checks
 
 The extension preserves two focused commands in `bin/` for users who want to run only
@@ -170,8 +207,10 @@ To work on it locally:
 ```bash
 git clone https://github.com/SirHegel/gh-before-you-contribute
 cd gh-before-you-contribute
-tests/run.sh
-shellcheck gh-before-you-contribute bin/* tests/run.sh tests/fixtures/bin/gh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+SCHEMA_PYTHON=.venv/bin/python tests/run.sh
+shellcheck gh-before-you-contribute bin/* tests/run.sh tests/fixtures/bin/*
 ```
 
 The tests replace `gh` with deterministic fixtures, so they neither consume API quota nor
