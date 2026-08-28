@@ -1,8 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Usage and support guide
+  - name: Usage and integration Q&A
+    url: https://github.com/SirHegel/gh-before-you-contribute/discussions/categories/q-a
+    about: Ask public questions and search reusable answers before opening a bug report.
+  - name: Private support guide
     url: https://github.com/SirHegel/gh-before-you-contribute/blob/master/SUPPORT.md
-    about: Check installation help and the information needed for a reproducible report.
+    about: Use the private channel when a redacted public question is not possible.
   - name: Private vulnerability report
     url: https://github.com/SirHegel/gh-before-you-contribute/security/advisories/new
     about: Report a vulnerability privately; never place secrets or exploit details in a public issue.
