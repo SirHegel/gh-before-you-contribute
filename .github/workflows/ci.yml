@@ -17,7 +17,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Lint shell scripts
-        run: shellcheck gh-before-you-contribute bin/* tests/run.sh tests/fixtures/bin/*
+        run: >-
+          shellcheck gh-before-you-contribute bin/* tests/run.sh
+          tests/fixtures/bin/* tests/fixtures/action/*
 
       - name: Install schema test dependency
         run: |

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Count Action-level audit invocations, then delegate to the real deterministic audit.
+set -uo pipefail
+
+if [[ -z ${BYC_REAL_AUDIT:-} || ! -x $BYC_REAL_AUDIT ]]; then
+  printf 'BYC_REAL_AUDIT must point to the real audit executable\n' >&2
+  exit 90
+fi
+if [[ -z ${BYC_AUDIT_COUNT_FILE:-} ]]; then
+  printf 'BYC_AUDIT_COUNT_FILE is required\n' >&2
+  exit 90
+fi
+
+count=0
+if [[ -s $BYC_AUDIT_COUNT_FILE ]]; then
+  IFS= read -r count <"$BYC_AUDIT_COUNT_FILE"
+fi
+if [[ ! $count =~ ^[0-9]+$ ]]; then
+  printf 'invalid invocation counter\n' >&2
+  exit 90
+fi
+printf '%s\n' "$((count + 1))" >"$BYC_AUDIT_COUNT_FILE"
+
+exec "$BYC_REAL_AUDIT" "$@"

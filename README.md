@@ -186,16 +186,39 @@ permissions:
   pull-requests: read
 
 steps:
-  - uses: SirHegel/gh-before-you-contribute@v1
+  - id: audit
+    uses: SirHegel/gh-before-you-contribute@v1
     with:
       repository: pytest-dev/pytest
       issue: '14819'
       format: text
       strict: 'true'
+
+  - name: Record a safe-to-review result
+    if: ${{ steps.audit.outputs.verdict == 'READY' }}
+    env:
+      POLICY_VERDICT: ${{ steps.audit.outputs.policy_verdict }}
+      ISSUE_VERDICT: ${{ steps.audit.outputs.issue_verdict }}
+    run: |
+      printf 'Ready for human review (policy=%s, issue=%s)\n' \
+        "$POLICY_VERDICT" "$ISSUE_VERDICT"
 ```
 
 The Action uses `github.token` and performs read-only API requests. It never writes a
 comment, modifies an issue, submits a pull request, or sends telemetry.
+
+A completed audit exposes three native scalar outputs without running the audit again:
+
+| Output | Values |
+|---|---|
+| `verdict` | `READY`, `REVIEW`, `BLOCKED` |
+| `policy_verdict` | `FORBIDDEN`, `DISCLOSE`, `RESPONSIBLE-USE`, `NO-POLICY`, `NO-DOCS` |
+| `issue_verdict` | `FREE`, `REVIEW`, `TAKEN`, or `SKIPPED` when `issue` is omitted |
+
+Only those validated enums are written as Action outputs. Reports and evidence stay in
+the requested text or JSON log. An API, validation, or rendering failure exits with
+status 2 and leaves the outputs unset. A strict blocker still publishes its truthful
+`BLOCKED` verdicts before preserving exit status 1.
 
 ## Requirements and development
 
@@ -210,7 +233,8 @@ cd gh-before-you-contribute
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 SCHEMA_PYTHON=.venv/bin/python tests/run.sh
-shellcheck gh-before-you-contribute bin/* tests/run.sh tests/fixtures/bin/*
+shellcheck gh-before-you-contribute bin/* tests/run.sh tests/fixtures/bin/* \
+  tests/fixtures/action/*
 ```
 
 The tests replace `gh` with deterministic fixtures, so they neither consume API quota nor

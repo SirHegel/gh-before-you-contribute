@@ -7,7 +7,7 @@ Thank you for improving `gh-before-you-contribute`.
    evidence.
 3. Add a deterministic fixture for every new policy or issue-availability rule.
 4. Run `tests/run.sh` and `shellcheck gh-before-you-contribute bin/* tests/run.sh
-   tests/fixtures/bin/*` before opening a pull request.
+   tests/fixtures/bin/* tests/fixtures/action/*` before opening a pull request.
 
 The test suite validates every JSON variant against the checked-in schema. Install the
 pinned development dependency and set `SCHEMA_PYTHON` as shown in the README development

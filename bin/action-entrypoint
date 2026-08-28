@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Translate composite Action inputs into one audit invocation.
+set -uo pipefail
+
+action_path=${1-}
+
+if [[ -z $action_path || ! -x $action_path/gh-before-you-contribute ]]; then
+  printf 'ERROR  Action audit executable is unavailable\n' >&2
+  exit 2
+fi
+
+if [[ -z ${GITHUB_OUTPUT:-} ]]; then
+  printf 'ERROR  GITHUB_OUTPUT is unavailable\n' >&2
+  exit 2
+fi
+
+if [[ ! -e $GITHUB_OUTPUT ]]; then
+  if ! : >"$GITHUB_OUTPUT"; then
+    printf 'ERROR  GITHUB_OUTPUT is not writable\n' >&2
+    exit 2
+  fi
+fi
+if [[ ! -f $GITHUB_OUTPUT || ! -w $GITHUB_OUTPUT ]]; then
+  printf 'ERROR  GITHUB_OUTPUT is not a writable file\n' >&2
+  exit 2
+fi
+
+args=(--format "${BYC_FORMAT-text}")
+if [[ ${BYC_STRICT:-false} == "true" ]]; then
+  args+=(--strict)
+fi
+args+=(-- "${BYC_REPOSITORY:-}")
+if [[ -n ${BYC_ISSUE:-} ]]; then
+  args+=("$BYC_ISSUE")
+fi
+
+BYC_ACTION_OUTPUT_FILE=$GITHUB_OUTPUT \
+  "$action_path/gh-before-you-contribute" "${args[@]}"

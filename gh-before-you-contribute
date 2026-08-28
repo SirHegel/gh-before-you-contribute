@@ -35,6 +35,28 @@ emit_error() {
   fi
 }
 
+emit_action_outputs() {
+  local output_file=${BYC_ACTION_OUTPUT_FILE:-}
+
+  [[ -n $output_file ]] || return 0
+
+  case "$verdict" in
+    READY|REVIEW|BLOCKED) ;;
+    *) return 2 ;;
+  esac
+  case "$policy_verdict" in
+    FORBIDDEN|DISCLOSE|RESPONSIBLE-USE|NO-POLICY|NO-DOCS) ;;
+    *) return 2 ;;
+  esac
+  case "$issue_verdict" in
+    FREE|REVIEW|TAKEN|SKIPPED) ;;
+    *) return 2 ;;
+  esac
+
+  printf 'verdict=%s\npolicy_verdict=%s\nissue_verdict=%s\n' \
+    "$verdict" "$policy_verdict" "$issue_verdict" >>"$output_file"
+}
+
 while (($#)); do
   case "$1" in
     --format)
@@ -191,12 +213,17 @@ if [[ $format == "json" ]]; then
       issue: $issue
     }' || exit 2
 else
-  printf 'BEFORE-YOU-CONTRIBUTE  %s\n\n' "$repository"
-  printf '%s\n' "$policy_report"
+  printf 'BEFORE-YOU-CONTRIBUTE  %s\n\n' "$repository" || exit 2
+  printf '%s\n' "$policy_report" || exit 2
   if [[ -n $issue_report ]]; then
-    printf '\n%s\n' "$issue_report"
+    printf '\n%s\n' "$issue_report" || exit 2
   fi
-  printf '\n%s  %s\n' "$verdict" "$repository"
+  printf '\n%s  %s\n' "$verdict" "$repository" || exit 2
+fi
+
+if ! emit_action_outputs; then
+  emit_error "cannot write validated Action outputs"
+  exit 2
 fi
 
 if [[ $strict == true && $verdict == "BLOCKED" ]]; then
