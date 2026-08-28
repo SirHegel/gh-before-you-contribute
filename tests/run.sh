@@ -447,7 +447,7 @@ else
     "$body_claim_json" \
     "$comment_claim_json"; do
     if ! printf '%s\n' "$schema_sample" \
-      | "$schema_python" "$root/tests/validate-schema.py" "$root/schema/audit-v1.schema.json"; then
+      | "$schema_python" "$root/tests/validate-schema.py"; then
       schema_validation_ok=false
     fi
   done
@@ -462,7 +462,7 @@ else
     | .issue.signals[0].createdAt = "yesterday"
   ' <<<"$blocked_json")
   if printf '%s\n' "$invalid_format_json" \
-    | "$schema_python" "$root/tests/validate-schema.py" "$root/schema/audit-v1.schema.json" \
+    | "$schema_python" "$root/tests/validate-schema.py" \
       >/dev/null 2>&1; then
     fail "schema validation rejects invalid URI and date-time formats"
   else
