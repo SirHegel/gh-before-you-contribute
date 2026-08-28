@@ -219,11 +219,14 @@ evidence and safety rules.
 
 ## Support and security
 
-Open a [GitHub issue](https://github.com/SirHegel/gh-before-you-contribute/issues) for
+Ask public usage and integration questions in
+[Discussions Q&A](https://github.com/SirHegel/gh-before-you-contribute/discussions/categories/q-a),
+and open a [GitHub issue](https://github.com/SirHegel/gh-before-you-contribute/issues) for
 reproducible bugs and feature requests. Private support is available at
 [alvarezruizj289@gmail.com](mailto:alvarezruizj289@gmail.com); see [SUPPORT.md](SUPPORT.md).
 Report vulnerabilities through GitHub private vulnerability reporting as described in
-[SECURITY.md](SECURITY.md).
+[SECURITY.md](SECURITY.md). Never post tokens or private repository evidence in an issue
+or discussion.
 
 ## Licence
 
