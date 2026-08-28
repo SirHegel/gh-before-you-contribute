@@ -70,7 +70,9 @@ case "$endpoint" in
     fi
     ;;
   search/issues\?q=*)
-    if [[ $arguments == *" --jq "* ]]; then
+    if [[ $scenario == "mention-only" && $arguments == *" --jq "* && $endpoint == *"+is:open+42" ]]; then
+      printf '%s\n' '  #99 someone 2026-08-27 Document an unrelated example using 42'
+    elif [[ $arguments == *" --jq "* ]]; then
       :
     else
       printf '%s\n' '{"items":[]}'

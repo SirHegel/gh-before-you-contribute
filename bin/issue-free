@@ -99,14 +99,28 @@ coment=$(grep -Eio ".{0,50}(I(.| a)?m working on|I(.| wi)?ll (open|send|submit)|
   <<<"$comment_text" | head -3)
 
 ocupado=""
-[ -n "$enlazados$mencion$reclamo$coment" ] && ocupado=1
+revision=""
+# A GitHub timeline link or an explicit claim is evidence that the work is taken.
+# Search hits are weaker: a pull request can mention the same number as an example,
+# a dependency issue, or a rejected alternative. Surface those for human review
+# without turning an ambiguous text match into a definitive blocker.
+[ -n "$enlazados$reclamo$coment" ] && ocupado=1
+[ -z "$ocupado" ] && [ -n "$mencion" ] && revision=1
 
-echo "$([ -n "$ocupado" ] && echo TAKEN || echo FREE)  $repo#$num  ($estado, author $autor, assigned to $asig)"
+if [ -n "$ocupado" ]; then
+  veredicto="TAKEN"
+elif [ -n "$revision" ]; then
+  veredicto="REVIEW"
+else
+  veredicto="FREE"
+fi
+
+echo "$veredicto  $repo#$num  ($estado, author $autor, assigned to $asig)"
 echo "  $titulo"
 [ -n "$enlazados" ] && { echo "  pull requests GitHub has linked:"; echo "$enlazados"; }
 [ -n "$mencion" ]   && { echo "  open pull requests mentioning the number:"; echo "$mencion"; }
 [ -n "$suyos" ]     && { echo "  open pull requests by the issue author (check whether one covers it):"; echo "$suyos"; }
 [ -n "$reclamo" ] && { echo "  CLAIMED in the issue body:"; printf '    · %s\n' "${reclamo//$'\n'/$'\n    · '}"; }
 [ -n "$coment" ] && { echo "  CLAIMED in the comments:"; printf '    · %s\n' "${coment//$'\n'/$'\n    · '}"; }
-[ -z "$ocupado" ] && echo "  -> no open pull request, no visible claim"
+[ -z "$ocupado$revision" ] && echo "  -> no open pull request, no visible claim"
 exit 0
