@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a wrong verdict, missing signal, or command failure with reproducible evidence.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for making the audit more reliable. Remove tokens, private URLs, and personal data before submitting.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Paste the release tag or commit reported by your installation.
+      placeholder: v1.0.1
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: Public target
+      description: Which public repository and optional issue did you audit?
+      placeholder: owner/repository#123
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command
+      description: Include flags, but never include a token or credential.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed result
+      description: Paste the complete redacted output and exit status.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result and evidence
+      description: Explain the expected verdict and link the policy, timeline event, or pull request that supports it.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, private repository details, and personal data.
+          required: true
+        - label: I reproduced this with the latest release or explained why I could not.
+          required: true
