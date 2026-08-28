@@ -30,3 +30,24 @@ jobs:
         env:
           SCHEMA_PYTHON: ${{ runner.temp }}/schema-venv/bin/python
         run: tests/run.sh
+
+      - name: Exercise the composite Action on the hosted runner
+        id: action-smoke
+        uses: ./
+        with:
+          repository: SirHegel/gh-before-you-contribute
+          format: json
+
+      - name: Verify native Action outputs
+        env:
+          VERDICT: ${{ steps.action-smoke.outputs.verdict }}
+          POLICY_VERDICT: ${{ steps.action-smoke.outputs.policy_verdict }}
+          ISSUE_VERDICT: ${{ steps.action-smoke.outputs.issue_verdict }}
+        run: |
+          if [[ "$VERDICT" != "READY" \
+            || "$POLICY_VERDICT" != "DISCLOSE" \
+            || "$ISSUE_VERDICT" != "SKIPPED" ]]; then
+            printf 'Unexpected Action outputs: verdict=%s policy=%s issue=%s\n' \
+              "$VERDICT" "$POLICY_VERDICT" "$ISSUE_VERDICT" >&2
+            exit 1
+          fi
