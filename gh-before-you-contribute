@@ -116,24 +116,58 @@ if ! gh api "repos/$repository" >/dev/null 2>&1; then
   exit 2
 fi
 
-policy_report=$("$script_dir/bin/ai-policy" "$repository" 2>&1)
+policy_json=$("$script_dir/bin/ai-policy" "$repository" --json 2>&1)
 policy_code=$?
-policy_verdict=$(sed -n '1{s/[[:space:]].*//;p;}' <<<"$policy_report")
 if ((policy_code != 0)); then
-  emit_error "policy audit failed: $policy_report"
+  emit_error "policy audit failed: $policy_json"
   exit 2
 fi
+if ! jq -e '
+  type == "object"
+  and (.verdict | type == "string")
+  and (
+    .verdict == "FORBIDDEN"
+    or .verdict == "DISCLOSE"
+    or .verdict == "RESPONSIBLE-USE"
+    or .verdict == "NO-POLICY"
+    or .verdict == "NO-DOCS"
+  )
+  and (.report | type == "string")
+  and (.sources | type == "array")
+  and (.matches | type == "array")
+  and (.constraints | type == "array")
+  and (.manualReview | type == "array")
+' >/dev/null 2>&1 <<<"$policy_json"; then
+  emit_error "policy audit failed: invalid structured result"
+  exit 2
+fi
+policy_verdict=$(jq -r '.verdict' <<<"$policy_json")
+policy_report=$(jq -r '.report' <<<"$policy_json")
 
 issue_report=""
 issue_verdict="SKIPPED"
+issue_json="null"
 if [[ -n $issue ]]; then
-  issue_report=$("$script_dir/bin/issue-free" "$repository" "$issue" 2>&1)
+  issue_json=$("$script_dir/bin/issue-free" "$repository" "$issue" --json 2>&1)
   issue_code=$?
-  issue_verdict=$(sed -n '1{s/[[:space:]].*//;p;}' <<<"$issue_report")
   if ((issue_code != 0)); then
-    emit_error "issue audit failed: $issue_report"
+    emit_error "issue audit failed: $issue_json"
     exit 2
   fi
+  if ! jq -e --argjson requested_number "$issue" '
+    type == "object"
+    and (.number | type == "number")
+    and .number == $requested_number
+    and (.verdict | type == "string")
+    and (.verdict == "FREE" or .verdict == "REVIEW" or .verdict == "TAKEN")
+    and (.report | type == "string")
+    and (.signals | type == "array")
+  ' >/dev/null 2>&1 <<<"$issue_json"; then
+    emit_error "issue audit failed: invalid structured result"
+    exit 2
+  fi
+  issue_verdict=$(jq -r '.verdict' <<<"$issue_json")
+  issue_report=$(jq -r '.report' <<<"$issue_json")
 fi
 
 verdict="READY"
@@ -144,34 +178,18 @@ elif [[ $policy_verdict == "NO-DOCS" || $policy_verdict == "NO-POLICY" || $issue
 fi
 
 if [[ $format == "json" ]]; then
-  if [[ -n $issue ]]; then
-    jq -n \
-      --arg repository "$repository" \
-      --arg verdict "$verdict" \
-      --arg policy_verdict "$policy_verdict" \
-      --arg policy_report "$policy_report" \
-      --argjson issue_number "$issue" \
-      --arg issue_verdict "$issue_verdict" \
-      --arg issue_report "$issue_report" \
-      '{
-        repository: $repository,
-        verdict: $verdict,
-        policy: {verdict: $policy_verdict, report: $policy_report},
-        issue: {number: $issue_number, verdict: $issue_verdict, report: $issue_report}
-      }'
-  else
-    jq -n \
-      --arg repository "$repository" \
-      --arg verdict "$verdict" \
-      --arg policy_verdict "$policy_verdict" \
-      --arg policy_report "$policy_report" \
-      '{
-        repository: $repository,
-        verdict: $verdict,
-        policy: {verdict: $policy_verdict, report: $policy_report},
-        issue: null
-      }'
-  fi
+  jq -n \
+    --arg repository "$repository" \
+    --arg verdict "$verdict" \
+    --argjson policy "$policy_json" \
+    --argjson issue "$issue_json" \
+    '{
+      schemaVersion: 1,
+      repository: $repository,
+      verdict: $verdict,
+      policy: $policy,
+      issue: $issue
+    }' || exit 2
 else
   printf 'BEFORE-YOU-CONTRIBUTE  %s\n\n' "$repository"
   printf '%s\n' "$policy_report"

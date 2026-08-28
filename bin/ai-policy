@@ -8,6 +8,12 @@
 # Salida: FORBIDDEN | DISCLOSE | RESPONSIBLE-USE | NO-POLICY  + las frases que lo deciden.
 set -uo pipefail
 
+output_format="text"
+if (($# == 2)) && [[ $2 == "--json" ]]; then
+  output_format="json"
+  set -- "$1"
+fi
+
 if (($# != 1)) || [[ ! $1 =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
   echo "usage: ai-policy OWNER/REPO" >&2
   exit 2
@@ -52,6 +58,9 @@ agregar_fuente() {
     if [[ -n $content ]]; then
       corpus+="$content"$'\n'
       fuentes+=("$owner/$path")
+      source_owners+=("$owner")
+      source_paths+=("$path")
+      source_contents+=("$content")
     fi
     return 0
   else
@@ -62,7 +71,183 @@ agregar_fuente() {
   return "$status"
 }
 
-corpus=""; fuentes=()
+json_append() {
+  local array=$1
+  local item=$2
+
+  jq -cn --argjson array "$array" --argjson item "$item" '$array + [$item]'
+}
+
+extract_context() {
+  local content=$1
+  local regex=$2
+  local before=$3
+  local after=$4
+  local limit=$5
+  local pattern=".{0,$before}($regex).{0,$after}"
+
+  jq -Rrs --arg pattern "$pattern" '
+    [
+      split("\n")[]
+      | match($pattern; "ig").string
+      | gsub("\\s+"; " ")
+      | select(length > 0)
+    ]
+    | .[]
+  ' <<<"$content" | sort -u | sed -n "1,${limit}p"
+}
+
+build_sources_json() {
+  local result='[]'
+  local index
+  local owner
+  local path
+  local scope
+  local item
+
+  for index in "${!source_paths[@]}"; do
+    owner=${source_owners[$index]}
+    path=${source_paths[$index]}
+    if [[ $owner == "$org/.github" ]]; then
+      scope="organization"
+    else
+      scope="repository"
+    fi
+    item=$(jq -cn \
+      --arg scope "$scope" \
+      --arg repository "$owner" \
+      --arg path "$path" \
+      --arg url "https://github.com/$owner/blob/HEAD/$path" \
+      '{scope: $scope, repository: $repository, path: $path, url: $url}') || return 2
+    result=$(json_append "$result" "$item") || return 2
+  done
+
+  printf '%s\n' "$result"
+}
+
+build_matches_json() {
+  local result='[]'
+  local match_count=0
+  local max_matches=8
+  local index
+  local rule_index
+  local rule_match_count
+  local owner
+  local path
+  local scope
+  local content
+  local rule
+  local effect
+  local regex
+  local excerpt
+  local rule_excerpts
+  local item
+  local -a rules=(
+    "forbidden"
+    "disclosure_required"
+    "responsible_use"
+    "no_ai_credit"
+  )
+  local -a effects=(
+    "FORBIDDEN"
+    "DISCLOSE"
+    "RESPONSIBLE-USE"
+    "CONSTRAINT"
+  )
+  local -a regexes=(
+    'closed on sight|likely to be blocked|we do not (accept|allow) (AI|LLM)|(AI|LLM)[a-z -]{0,30}(contributions|PRs|pull requests)[^.]{0,20} (are|is) (banned|prohibited|forbidden|not accepted)'
+    'must disclose|MUST disclose|disclosure \(required\)|please disclose|Assisted-by|Co-authored-by.{0,30}trailer|AI Disclosure'
+    'LLM|AI[- ]generated|AI tools|generative AI|Copilot|ChatGPT|AI (coding )?agents?|AI models?'
+    '[Oo]nly human beings can (ever )?be credited|no Co-Developed-By or Co-Authored-By'
+  )
+
+  for rule_index in "${!rules[@]}"; do
+    rule=${rules[$rule_index]}
+    effect=${effects[$rule_index]}
+    regex=${regexes[$rule_index]}
+    rule_match_count=0
+
+    for index in "${!source_paths[@]}"; do
+      ((match_count >= max_matches || rule_match_count >= 2)) && break
+      owner=${source_owners[$index]}
+      path=${source_paths[$index]}
+      content=${source_contents[$index]}
+      if [[ $owner == "$org/.github" ]]; then
+        scope="organization"
+      else
+        scope="repository"
+      fi
+
+      rule_excerpts=$(extract_context "$content" "$regex" 80 80 2) || return 2
+      while IFS= read -r excerpt; do
+        [[ -z $excerpt ]] && continue
+        item=$(jq -cn \
+          --arg rule "$rule" \
+          --arg effect "$effect" \
+          --arg scope "$scope" \
+          --arg repository "$owner" \
+          --arg path "$path" \
+          --arg excerpt "$excerpt" \
+          '{
+            rule: $rule,
+            effect: $effect,
+            source: {scope: $scope, repository: $repository, path: $path},
+            excerpt: $excerpt[0:240]
+          }') || return 2
+        result=$(json_append "$result" "$item") || return 2
+        match_count=$((match_count + 1))
+        rule_match_count=$((rule_match_count + 1))
+        ((match_count >= max_matches || rule_match_count >= 2)) && break
+      done <<<"$rule_excerpts"
+    done
+  done
+
+  printf '%s\n' "$result"
+}
+
+emit_result() {
+  local verdict=$1
+  local report=$2
+  local no_ai_credit=$3
+  local sources_json='[]'
+  local matches_json='[]'
+  local constraints_json='[]'
+  local manual_review_json='[]'
+
+  if [[ $output_format == "text" ]]; then
+    printf '%s\n' "$report"
+    return
+  fi
+
+  sources_json=$(build_sources_json) || return 2
+  matches_json=$(build_matches_json) || return 2
+  if [[ $no_ai_credit == "true" ]]; then
+    constraints_json='["NO_AI_CREDIT"]'
+  fi
+  if [[ -n $web ]]; then
+    manual_review_json=$(jq -cn \
+      --arg url "$web" \
+      '[{kind: "homepage", url: $url, reason: "not_fetched"}]') || return 2
+  fi
+
+  jq -n \
+    --arg verdict "$verdict" \
+    --arg report "$report" \
+    --argjson sources "$sources_json" \
+    --argjson matches "$matches_json" \
+    --argjson constraints "$constraints_json" \
+    --argjson manual_review "$manual_review_json" \
+    '{
+      verdict: $verdict,
+      report: $report,
+      sources: $sources,
+      matches: $matches,
+      constraints: $constraints,
+      manualReview: $manual_review
+    }'
+}
+
+corpus=""; fuentes=(); source_owners=(); source_paths=(); source_contents=()
 # 1. ORGANISATION level - the source people skip, and the one that closed the Click PR.
 for f in CONTRIBUTING.md AI_POLICY.md POLICY.md profile/README.md; do
   agregar_fuente "$org/.github" "$f" || exit 2
@@ -80,7 +265,12 @@ if ! web=$(gh api "repos/$repo" --jq '.homepage // empty' 2>&1); then
   exit 2
 fi
 
-if [ -z "$corpus" ]; then echo "NO-DOCS  $repo"; [ -n "$web" ] && echo "  revisar a mano: $web"; exit 0; fi
+if [ -z "$corpus" ]; then
+  report="NO-DOCS  $repo"
+  [ -n "$web" ] && report+=$'\n'"  revisar a mano: $web"
+  emit_result "NO-DOCS" "$report" "false" || exit 2
+  exit 0
+fi
 
 clasifica() { grep -Eiq "$1" <<<"$corpus"; }
 # Unambiguous prohibitions only. No optional "(not )?": Rust's policy says
@@ -96,14 +286,27 @@ fi
 
 # A legal rule separate from permission: systemd and util-linux accept AI-assisted
 # work but forbid crediting it in the commit - the opposite of what pytest asks for.
+base_estado=$estado
+no_ai_credit="false"
 if clasifica '[Oo]nly human beings can (ever )?be credited|no Co-Developed-By or Co-Authored-By'
-then estado="$estado  [NO-AI-CREDIT: do not add Co-authored-by or Assisted-by for a model]"
+then
+  estado="$estado  [NO-AI-CREDIT: do not add Co-authored-by or Assisted-by for a model]"
+  no_ai_credit="true"
 fi
 
-echo "$estado  $repo"
-printf '  source: %s\n' "${fuentes[@]}"
-[ -n "$web" ] && echo "  site:   $web  (check /contributing by hand)"
-echo "  deciding phrases:"
-grep -Eio ".{0,110}(closed on sight|must disclose|Assisted-by|Co-authored-by|likely to be blocked|autonomous agents|AI[- ]generated|AI tools|LLM).{0,110}" <<<"$corpus" \
-  | sed 's/[[:space:]]\+/ /g' | sort -u | head -6 | sed 's/^/    · /'
+deciding_phrases=$(extract_context "$corpus" \
+  'closed on sight|must disclose|Assisted-by|Co-authored-by|likely to be blocked|autonomous agents|AI[- ]generated|AI tools|LLM' \
+  110 110 6) || {
+  api_error "cannot extract deciding phrases for $repo"
+  exit 2
+}
+report=$(
+  echo "$estado  $repo"
+  printf '  source: %s\n' "${fuentes[@]}"
+  [ -n "$web" ] && echo "  site:   $web  (check /contributing by hand)"
+  echo "  deciding phrases:"
+  [[ -n $deciding_phrases ]] \
+    && printf '    · %s\n' "${deciding_phrases//$'\n'/$'\n    · '}"
+)
+emit_result "$base_estado" "$report" "$no_ai_credit" || exit 2
 exit 0
