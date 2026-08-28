@@ -26,6 +26,15 @@ body:
       required: true
 
   - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the operating system, shell, GitHub CLI version, and installation method relevant to the failure.
+      placeholder: Ubuntu 24.04; Bash 5.2; gh 2.x; installed with gh extension install
+    validations:
+      required: true
+
+  - type: textarea
     id: command
     attributes:
       label: Exact command
@@ -38,7 +47,7 @@ body:
     id: observed
     attributes:
       label: Observed result
-      description: Paste the complete redacted output and exit status.
+      description: Paste only the minimal output needed to reproduce the failure, redacted, plus the exit status.
       render: text
     validations:
       required: true

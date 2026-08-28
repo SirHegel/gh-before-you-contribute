@@ -20,6 +20,8 @@ the command.
 
 ## AI-assisted work
 
+Mark exactly one option:
+
 - [ ] No material AI assistance was used.
 - [ ] Material AI assistance was used and is disclosed below; I verified every cited source,
       understand every changed line, and personally ran the checks above.
