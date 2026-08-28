@@ -11,11 +11,13 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: validate-schema.py SCHEMA", file=sys.stderr)
+    if len(sys.argv) != 1:
+        print("usage: validate-schema.py", file=sys.stderr)
         return 2
 
-    schema_path = Path(sys.argv[1])
+    schema_path = (
+        Path(__file__).resolve().parents[1] / "schema" / "audit-v1.schema.json"
+    )
     with schema_path.open(encoding="utf-8") as schema_file:
         schema = json.load(schema_file)
     instance = json.load(sys.stdin)
