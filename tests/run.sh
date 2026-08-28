@@ -11,6 +11,8 @@ export PATH="$root/tests/fixtures/bin:$PATH"
 command="$root/gh-before-you-contribute"
 schema_python=${SCHEMA_PYTHON:-python3}
 failures=0
+test_tmp=$(mktemp -d)
+trap 'rm -rf -- "$test_tmp"' EXIT
 
 pass() {
   printf 'ok - %s\n' "$1"
@@ -62,6 +64,230 @@ if jq -e '
   pass "json v1 keeps legacy reports and adds bounded typed evidence"
 else
   fail "json v1 keeps legacy reports and adds bounded typed evidence"
+fi
+
+action_fixture_path="$root/tests/fixtures/action"
+
+prepare_action_case() {
+  action_case_dir="$test_tmp/$1"
+  action_output_file="$action_case_dir/github-output"
+  action_count_file="$action_case_dir/audit-count"
+  mkdir -p "$action_case_dir"
+  : >"$action_output_file"
+  : >"$action_count_file"
+}
+
+assert_action_invoked_once() {
+  local name=$1
+  local count_file=$2
+  local count=""
+
+  if [[ -f $count_file ]]; then
+    IFS= read -r count <"$count_file" || true
+  fi
+  if [[ $count == "1" ]]; then
+    pass "$name"
+  else
+    fail "$name (observed '${count:-none}')"
+  fi
+}
+
+action_metadata=$(<"$root/action.yml")
+verdict_mapping="value: \${{ steps.audit.outputs.verdict }}"
+policy_mapping="value: \${{ steps.audit.outputs.policy_verdict }}"
+issue_mapping="value: \${{ steps.audit.outputs.issue_verdict }}"
+if [[ $action_metadata == *"$verdict_mapping"* \
+  && $action_metadata == *"$policy_mapping"* \
+  && $action_metadata == *"$issue_mapping"* \
+  && $action_metadata == *'id: audit'* ]]; then
+  pass "composite metadata maps all outputs through the audit step"
+else
+  fail "composite metadata maps all outputs through the audit step"
+fi
+
+prepare_action_case "action-text"
+action_text_stdout="$action_case_dir/stdout"
+expected_action_text_stdout="$action_case_dir/expected-stdout"
+printf '%s\n' "$expected_ready" >"$expected_action_text_stdout"
+GH_FIXTURE=ready \
+  BYC_REPOSITORY=acme/project \
+  BYC_ISSUE=42 \
+  BYC_FORMAT=text \
+  BYC_STRICT=false \
+  GITHUB_OUTPUT="$action_output_file" \
+  BYC_REAL_AUDIT="$command" \
+  BYC_AUDIT_COUNT_FILE="$action_count_file" \
+  "$root/bin/action-entrypoint" "$action_fixture_path" >"$action_text_stdout"
+action_text_code=$?
+if ((action_text_code == 0)) && cmp -s "$action_text_stdout" "$expected_action_text_stdout"; then
+  pass "Action text output is byte-for-byte compatible"
+else
+  fail "Action text output is byte-for-byte compatible"
+fi
+assert_action_invoked_once "Action text mode invokes the audit exactly once" "$action_count_file"
+expected_action_ready_outputs=$'verdict=READY\npolicy_verdict=DISCLOSE\nissue_verdict=FREE'
+action_outputs=$(<"$action_output_file")
+if [[ $action_outputs == "$expected_action_ready_outputs" ]]; then
+  pass "Action emits exactly the three validated ready enums"
+else
+  fail "Action emits exactly the three validated ready enums"
+fi
+
+prepare_action_case "action-json"
+action_json_stdout="$action_case_dir/stdout"
+expected_action_json_stdout="$action_case_dir/expected-stdout"
+printf '%s\n' "$json" >"$expected_action_json_stdout"
+GH_FIXTURE=ready \
+  BYC_REPOSITORY=acme/project \
+  BYC_ISSUE=42 \
+  BYC_FORMAT=json \
+  BYC_STRICT=false \
+  GITHUB_OUTPUT="$action_output_file" \
+  BYC_REAL_AUDIT="$command" \
+  BYC_AUDIT_COUNT_FILE="$action_count_file" \
+  "$root/bin/action-entrypoint" "$action_fixture_path" >"$action_json_stdout"
+action_json_code=$?
+if ((action_json_code == 0)) && cmp -s "$action_json_stdout" "$expected_action_json_stdout"; then
+  pass "Action JSON output is byte-for-byte compatible"
+else
+  fail "Action JSON output is byte-for-byte compatible"
+fi
+assert_action_invoked_once "Action JSON mode invokes the audit exactly once" "$action_count_file"
+
+expected_no_issue=$(GH_FIXTURE=no-docs "$command" acme/project)
+prepare_action_case "action-no-issue"
+action_no_issue=$(GH_FIXTURE=no-docs \
+  BYC_REPOSITORY=acme/project \
+  BYC_ISSUE="" \
+  BYC_FORMAT=text \
+  BYC_STRICT=false \
+  GITHUB_OUTPUT="$action_output_file" \
+  BYC_REAL_AUDIT="$command" \
+  BYC_AUDIT_COUNT_FILE="$action_count_file" \
+  "$root/bin/action-entrypoint" "$action_fixture_path")
+action_no_issue_code=$?
+expected_no_issue_outputs=$'verdict=REVIEW\npolicy_verdict=NO-DOCS\nissue_verdict=SKIPPED'
+action_no_issue_outputs=$(<"$action_output_file")
+if ((action_no_issue_code == 0)) \
+  && [[ $action_no_issue == "$expected_no_issue" ]] \
+  && [[ $action_no_issue_outputs == "$expected_no_issue_outputs" ]]; then
+  pass "Action reports SKIPPED without changing no-issue text"
+else
+  fail "Action reports SKIPPED without changing no-issue text"
+fi
+assert_action_invoked_once "Action no-issue mode invokes the audit exactly once" "$action_count_file"
+
+expected_strict=$(GH_FIXTURE=blocked "$command" acme/project 42 --strict)
+expected_strict_code=$?
+prepare_action_case "action-strict"
+action_strict=$(GH_FIXTURE=blocked \
+  BYC_REPOSITORY=acme/project \
+  BYC_ISSUE=42 \
+  BYC_FORMAT=text \
+  BYC_STRICT=true \
+  GITHUB_OUTPUT="$action_output_file" \
+  BYC_REAL_AUDIT="$command" \
+  BYC_AUDIT_COUNT_FILE="$action_count_file" \
+  "$root/bin/action-entrypoint" "$action_fixture_path")
+action_strict_code=$?
+expected_strict_outputs=$'verdict=BLOCKED\npolicy_verdict=FORBIDDEN\nissue_verdict=TAKEN'
+action_strict_outputs=$(<"$action_output_file")
+if ((expected_strict_code == 1 && action_strict_code == 1)) \
+  && [[ $action_strict == "$expected_strict" ]] \
+  && [[ $action_strict_outputs == "$expected_strict_outputs" ]]; then
+  pass "Action strict blockers preserve output and exit status 1"
+else
+  fail "Action strict blockers preserve output and exit status 1"
+fi
+assert_action_invoked_once "Action strict mode invokes the audit exactly once" "$action_count_file"
+
+expected_action_error=$(GH_FIXTURE=api-error "$command" acme/project 42 --json 2>/dev/null)
+expected_action_error_code=$?
+prepare_action_case "action-api-error"
+action_error=$(GH_FIXTURE=api-error \
+  BYC_REPOSITORY=acme/project \
+  BYC_ISSUE=42 \
+  BYC_FORMAT=json \
+  BYC_STRICT=false \
+  GITHUB_OUTPUT="$action_output_file" \
+  BYC_REAL_AUDIT="$command" \
+  BYC_AUDIT_COUNT_FILE="$action_count_file" \
+  "$root/bin/action-entrypoint" "$action_fixture_path" 2>/dev/null)
+action_error_code=$?
+action_error_outputs=$(<"$action_output_file")
+if ((expected_action_error_code == 2 && action_error_code == 2)) \
+  && [[ $action_error == "$expected_action_error" ]] \
+  && [[ -z $action_error_outputs ]]; then
+  pass "Action API failures preserve JSON errors and emit no outputs"
+else
+  fail "Action API failures preserve JSON errors and emit no outputs"
+fi
+assert_action_invoked_once "Action API failure invokes the audit exactly once" "$action_count_file"
+
+prepare_action_case "action-render-error"
+action_render_error=$(JQ_FIXTURE=fail-main-emit GH_FIXTURE=ready \
+  BYC_REPOSITORY=acme/project \
+  BYC_ISSUE=42 \
+  BYC_FORMAT=json \
+  BYC_STRICT=false \
+  GITHUB_OUTPUT="$action_output_file" \
+  BYC_REAL_AUDIT="$command" \
+  BYC_AUDIT_COUNT_FILE="$action_count_file" \
+  "$root/bin/action-entrypoint" "$action_fixture_path" 2>/dev/null)
+action_render_error_code=$?
+action_render_error_outputs=$(<"$action_output_file")
+if ((action_render_error_code == 2)) \
+  && [[ -z $action_render_error ]] \
+  && [[ -z $action_render_error_outputs ]]; then
+  pass "Action render failures emit no misleading outputs"
+else
+  fail "Action render failures emit no misleading outputs"
+fi
+assert_action_invoked_once "Action render failure invokes the audit exactly once" "$action_count_file"
+
+prepare_action_case "action-no-output-path"
+if env -u GITHUB_OUTPUT \
+  GH_FIXTURE=ready \
+  BYC_REPOSITORY=acme/project \
+  BYC_ISSUE=42 \
+  BYC_FORMAT=text \
+  BYC_STRICT=false \
+  BYC_REAL_AUDIT="$command" \
+  BYC_AUDIT_COUNT_FILE="$action_count_file" \
+  "$root/bin/action-entrypoint" "$action_fixture_path" >/dev/null 2>&1; then
+  no_output_path_code=0
+else
+  no_output_path_code=$?
+fi
+no_output_path_count=$(<"$action_count_file")
+if ((no_output_path_code == 2)) && [[ -z $no_output_path_count ]]; then
+  pass "missing GITHUB_OUTPUT stops before the audit"
+else
+  fail "missing GITHUB_OUTPUT stops before the audit"
+fi
+
+prepare_action_case "action-invalid-output-path"
+invalid_output_path="$action_case_dir/not-writable"
+: >"$invalid_output_path"
+chmod 400 "$invalid_output_path"
+if GH_FIXTURE=ready \
+  BYC_REPOSITORY=acme/project \
+  BYC_ISSUE=42 \
+  BYC_FORMAT=text \
+  BYC_STRICT=false \
+  GITHUB_OUTPUT="$invalid_output_path" \
+  BYC_REAL_AUDIT="$command" \
+  BYC_AUDIT_COUNT_FILE="$action_count_file" \
+  "$root/bin/action-entrypoint" "$action_fixture_path" >/dev/null 2>&1; then
+  invalid_output_path_code=0
+else
+  invalid_output_path_code=$?
+fi
+invalid_output_path_count=$(<"$action_count_file")
+if ((invalid_output_path_code == 2)) && [[ -z $invalid_output_path_count ]]; then
+  pass "non-writable GITHUB_OUTPUT targets stop before the audit"
+else
+  fail "non-writable GITHUB_OUTPUT targets stop before the audit"
 fi
 
 attributed_json=$(GH_FIXTURE=attributed-policy "$command" acme/project --json)

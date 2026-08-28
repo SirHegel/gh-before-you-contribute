@@ -24,10 +24,22 @@ inputs:
     required: false
     default: 'false'
 
+outputs:
+  verdict:
+    description: Combined audit verdict (READY, REVIEW, or BLOCKED).
+    value: ${{ steps.audit.outputs.verdict }}
+  policy_verdict:
+    description: Contribution-policy verdict.
+    value: ${{ steps.audit.outputs.policy_verdict }}
+  issue_verdict:
+    description: Issue-availability verdict, or SKIPPED when no issue was requested.
+    value: ${{ steps.audit.outputs.issue_verdict }}
+
 runs:
   using: composite
   steps:
     - name: Audit before contributing
+      id: audit
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -36,11 +48,4 @@ runs:
         BYC_FORMAT: ${{ inputs.format }}
         BYC_STRICT: ${{ inputs.strict }}
       run: |
-        args=("$BYC_REPOSITORY" --format "$BYC_FORMAT")
-        if [[ -n "$BYC_ISSUE" ]]; then
-          args+=("$BYC_ISSUE")
-        fi
-        if [[ "$BYC_STRICT" == "true" ]]; then
-          args+=(--strict)
-        fi
-        "${{ github.action_path }}/gh-before-you-contribute" "${args[@]}"
+        "${{ github.action_path }}/bin/action-entrypoint" "${{ github.action_path }}"
